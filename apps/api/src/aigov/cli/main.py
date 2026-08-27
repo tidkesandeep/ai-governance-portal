@@ -128,6 +128,60 @@ def cmd_github_check(args: argparse.Namespace) -> int:
     return 0 if response.status_code in {200, 201} else 1
 
 
+def cmd_bind(args: argparse.Namespace) -> int:
+    body: dict[str, Any] = {"provider": args.provider, "resourceRef": args.resource}
+    if args.region:
+        body["region"] = args.region
+    if args.service:
+        body["service"] = args.service
+    response = request(
+        "POST",
+        f"/v1/ai-systems/{args.system_id}/runtime-bindings",
+        token=args.token,
+        api_url=_api_url(args.api_url),
+        json=body,
+    )
+    _print_json(response.json().get("runtimeBinding") or response.json())
+    return 0 if response.status_code in {200, 201} else 1
+
+
+def cmd_discover(args: argparse.Namespace) -> int:
+    response = request(
+        "POST",
+        f"/v1/ai-systems/{args.system_id}/runtime/discover",
+        token=args.token,
+        api_url=_api_url(args.api_url),
+        json={},
+    )
+    _print_json(response.json().get("latestAdapterRun") or response.json())
+    return 0 if response.status_code in {200, 201} else 1
+
+
+def cmd_collect(args: argparse.Namespace) -> int:
+    response = request(
+        "POST",
+        f"/v1/ai-systems/{args.system_id}/runtime/collect",
+        token=args.token,
+        api_url=_api_url(args.api_url),
+        json={"scenario": args.scenario},
+    )
+    payload = response.json()
+    _print_json(payload.get("latestReconciliation") or payload)
+    return 0 if response.status_code in {200, 201} else 1
+
+
+def cmd_enforce(args: argparse.Namespace) -> int:
+    response = request(
+        "POST",
+        f"/v1/ai-systems/{args.system_id}/runtime/enforce",
+        token=args.token,
+        api_url=_api_url(args.api_url),
+        json={"action": args.action},
+    )
+    _print_json(response.json().get("latestAdapterRun") or response.json())
+    return 0 if response.status_code in {200, 201} else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aigov",
@@ -162,6 +216,24 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("system_id")
     check.add_argument("--sha", required=True)
     check.add_argument("--repo", default=None)
+
+    bind = sub.add_parser("bind", help="Bind an AI system to a cloud runtime")
+    bind.add_argument("system_id")
+    bind.add_argument("--provider", required=True, choices=["aws", "azure", "gcp", "local"])
+    bind.add_argument("--resource", required=True)
+    bind.add_argument("--region", default=None)
+    bind.add_argument("--service", default=None)
+
+    discover = sub.add_parser("discover", help="Discover the bound cloud runtime")
+    discover.add_argument("system_id")
+
+    collect = sub.add_parser("collect", help="Collect observed runtime state through the adapter")
+    collect.add_argument("system_id")
+    collect.add_argument("--scenario", default="in_sync", choices=["in_sync", "drift", "stopped"])
+
+    enforce = sub.add_parser("enforce", help="Apply CONTAIN or PERMIT at the execution plane")
+    enforce.add_argument("system_id")
+    enforce.add_argument("--action", default="CONTAIN", choices=["CONTAIN", "PERMIT"])
     return parser
 
 
@@ -189,6 +261,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.github_command == "check":
             return cmd_github_check(args)
         parser.error("github requires a subcommand")
+    if args.command == "bind":
+        return cmd_bind(args)
+    if args.command == "discover":
+        return cmd_discover(args)
+    if args.command == "collect":
+        return cmd_collect(args)
+    if args.command == "enforce":
+        return cmd_enforce(args)
     parser.print_help()
     return 1
 
