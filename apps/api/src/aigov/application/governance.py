@@ -28,15 +28,26 @@ from aigov.domains.evidence.service import (
 from aigov.domains.identity.principal import Principal
 from aigov.domains.policy.engine import PolicyEngine, PolicyEvaluation
 from aigov.domains.risk.engine import assess as assess_risk
+from aigov.domains.workflow.service import (
+    ExceptionRuleError,
+    as_utc,
+    compute_due_at,
+    default_expires_at,
+    exception_fingerprint_records,
+    exceptions_to_policy_document,
+    validate_exception_request,
+)
 from aigov.infrastructure.ids import new_id, utcnow
 from aigov.infrastructure.models import (
     AISystemModel,
     ApprovalModel,
     DeploymentAuthorizationModel,
     EvidenceArtifactModel,
+    ExceptionModel,
     GovernanceDecisionModel,
     PolicyDecisionModel,
     RiskAssessmentModel,
+    WorkflowCaseModel,
 )
 from aigov.infrastructure.object_store import ObjectStorePort
 
@@ -57,12 +68,20 @@ class SegregationOfDutiesError(Exception):
         self.detail = detail
 
 
+class ExceptionRejectedError(Exception):
+    def __init__(self, detail: str, code: str = "EXCEPTION_REJECTED") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
 APPROVER_ROLES = {
     "privacy": ("privacy",),
     "security": ("security",),
     "risk": ("risk_reviewer",),
     "owner": ("owner",),
 }
+EXCEPTION_GRANT_ROLES = ("privacy", "security", "risk_reviewer")
 
 
 @dataclass
@@ -253,6 +272,66 @@ class GovernanceService:
         artifacts = await self.list_evidence(principal, system_id)
         return assess_controls(system, assessment, artifacts)
 
+    async def list_cases(self, principal: Principal, system_id: str) -> list[WorkflowCaseModel]:
+        result = await self.session.scalars(
+            select(WorkflowCaseModel)
+            .where(
+                WorkflowCaseModel.tenant_id == principal.tenant_id,
+                WorkflowCaseModel.system_id == system_id,
+            )
+            .order_by(WorkflowCaseModel.opened_at.desc())
+        )
+        return list(result)
+
+    async def latest_case(self, principal: Principal, system_id: str) -> WorkflowCaseModel | None:
+        return await self.session.scalar(
+            select(WorkflowCaseModel)
+            .where(
+                WorkflowCaseModel.tenant_id == principal.tenant_id,
+                WorkflowCaseModel.system_id == system_id,
+            )
+            .order_by(WorkflowCaseModel.opened_at.desc())
+            .limit(1)
+        )
+
+    async def open_case(self, principal: Principal, system_id: str) -> WorkflowCaseModel | None:
+        return await self.session.scalar(
+            select(WorkflowCaseModel)
+            .where(
+                WorkflowCaseModel.tenant_id == principal.tenant_id,
+                WorkflowCaseModel.system_id == system_id,
+                WorkflowCaseModel.status == "OPEN",
+            )
+            .order_by(WorkflowCaseModel.opened_at.desc())
+            .limit(1)
+        )
+
+    async def list_exceptions(self, principal: Principal, system_id: str) -> list[ExceptionModel]:
+        result = await self.session.scalars(
+            select(ExceptionModel)
+            .where(
+                ExceptionModel.tenant_id == principal.tenant_id,
+                ExceptionModel.system_id == system_id,
+            )
+            .order_by(ExceptionModel.requested_at.desc())
+        )
+        return list(result)
+
+    async def get_exception(
+        self, principal: Principal, system_id: str, exception_id: str
+    ) -> ExceptionModel:
+        await self.get_system(principal, system_id)
+        row = await self.session.scalar(
+            select(ExceptionModel).where(
+                ExceptionModel.id == exception_id,
+                ExceptionModel.tenant_id == principal.tenant_id,
+                ExceptionModel.system_id == system_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError(exception_id)
+        return row
+
     async def assess(self, principal: Principal, system_id: str) -> RiskAssessmentModel:
         system = await self.get_system(principal, system_id)
         result = assess_risk(system.registration)
@@ -428,11 +507,14 @@ class GovernanceService:
     async def cut_version(self, principal: Principal, system_id: str) -> AISystemModel:
         system = await self.get_system(principal, system_id)
         previous = system.current_version_id
+        now = utcnow()
         revoked_ids = await self._revoke_active_authorizations(
             principal, system, reason="ASSET_VERSION_CREATED"
         )
+        await self._revoke_open_exceptions(principal, system, now, reason="ASSET_VERSION_CREATED")
+        await self._close_open_case(principal, system, now, reason="ASSET_VERSION_CREATED")
         system.current_version_id = new_id("ver")
-        system.updated_at = utcnow()
+        system.updated_at = now
         await self.audit.append(
             tenant_id=principal.tenant_id,
             aggregate_id=system.id,
@@ -468,6 +550,9 @@ class GovernanceService:
         evidence_doc = controls_to_policy_document(posture)
         evidence_doc["stale"] = bool(evidence_stale or evidence_doc["stale"])
         target_environment = environment or system.environment
+        now = utcnow()
+        await self._expire_stale_exceptions(principal, system, now)
+        exception_rows = await self.list_exceptions(principal, system_id)
         document = {
             "asset": {
                 "id": system.id,
@@ -487,9 +572,13 @@ class GovernanceService:
                 "confidence": assessment.confidence if assessment else None,
             },
             "evidence": evidence_doc,
+            "exceptions": exceptions_to_policy_document(
+                exception_rows,
+                current_version_id=system.current_version_id,
+                now=now,
+            ),
         }
         evaluation: PolicyEvaluation = await self.policy_engine.evaluate_deployment(document)
-        now = utcnow()
         row = PolicyDecisionModel(
             id=new_id("pdec"),
             tenant_id=principal.tenant_id,
@@ -521,6 +610,11 @@ class GovernanceService:
                 "policy": evaluation.policy_bundle,
                 "collector": self.settings.collector_version or COLLECTOR_VERSION,
             },
+            exceptions=exception_fingerprint_records(
+                exception_rows,
+                current_version_id=system.current_version_id,
+                now=now,
+            ),
         )
         fingerprint = governance_fingerprint(parts)
         snapshot = GovernanceDecisionModel(
@@ -579,6 +673,14 @@ class GovernanceService:
                     "expiresAt": authorization.expires_at.isoformat(),
                 },
             )
+        await self._sync_workflow_case(
+            principal,
+            system,
+            decision=row,
+            snapshot=snapshot,
+            assessment=assessment,
+            now=now,
+        )
         await self.session.commit()
         await self.session.refresh(row)
         await self.session.refresh(snapshot)
@@ -646,6 +748,170 @@ class GovernanceService:
             await self.session.refresh(row)
         return row
 
+    async def request_exception(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        violation_code: str,
+        justification: str,
+        expires_at: datetime | None = None,
+        control_id: str | None = None,
+    ) -> ExceptionModel:
+        system = await self.get_system(principal, system_id)
+        now = utcnow()
+        await self._expire_stale_exceptions(principal, system, now)
+        assessment = await self.latest_assessment(principal, system_id)
+        band = assessment.risk_band if assessment else None
+        expiry = expires_at or default_expires_at(now, band)
+        try:
+            validate_exception_request(
+                violation_code=violation_code,
+                justification=justification,
+                expires_at=expiry,
+                now=now,
+                risk_band=band,
+            )
+        except ExceptionRuleError as exc:
+            raise ExceptionRejectedError(exc.detail, exc.code) from exc
+        case = await self.open_case(principal, system.id)
+        if case is None:
+            case = WorkflowCaseModel(
+                id=new_id("case"),
+                tenant_id=principal.tenant_id,
+                system_id=system.id,
+                decision_id=None,
+                snapshot_id=None,
+                case_type="EXCEPTION",
+                status="OPEN",
+                risk_band=band,
+                reason_codes=[violation_code],
+                opened_at=now,
+                due_at=compute_due_at(now, band),
+                closed_at=None,
+            )
+            self.session.add(case)
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="WorkflowCaseOpened",
+                actor=_actor(principal),
+                payload={
+                    "caseId": case.id,
+                    "reasonCodes": [violation_code],
+                    "dueAt": case.due_at.isoformat(),
+                },
+            )
+        row = ExceptionModel(
+            id=new_id("exc"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            case_id=case.id,
+            violation_code=violation_code,
+            control_id=control_id,
+            bound_version_id=system.current_version_id,
+            justification=justification.strip(),
+            status="REQUESTED",
+            requested_by=principal.actor_id,
+            granted_by=None,
+            requested_at=now,
+            granted_at=None,
+            expires_at=expiry,
+            revoked_at=None,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="ExceptionRequested",
+            actor=_actor(principal),
+            payload={
+                "exceptionId": row.id,
+                "violationCode": violation_code,
+                "expiresAt": expiry.isoformat(),
+                "caseId": case.id,
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def grant_exception(
+        self, principal: Principal, system_id: str, exception_id: str
+    ) -> ExceptionModel:
+        system = await self.get_system(principal, system_id)
+        if not principal.has_role(*EXCEPTION_GRANT_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to grant exceptions")
+        row = await self.get_exception(principal, system_id, exception_id)
+        if principal.actor_id == row.requested_by:
+            raise SegregationOfDutiesError("requester cannot grant their own exception")
+        if row.status != "REQUESTED":
+            raise ExceptionRejectedError("exception is not pending grant")
+        now = utcnow()
+        if as_utc(row.expires_at) <= now:
+            raise ExceptionRejectedError("exception has already expired")
+        row.status = "GRANTED"
+        row.granted_by = principal.actor_id
+        row.granted_at = now
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="ExceptionGranted",
+            actor=_actor(principal),
+            payload={
+                "exceptionId": row.id,
+                "violationCode": row.violation_code,
+                "expiresAt": row.expires_at.isoformat(),
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def deny_exception(
+        self, principal: Principal, system_id: str, exception_id: str
+    ) -> ExceptionModel:
+        if not principal.has_role(*EXCEPTION_GRANT_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to deny exceptions")
+        row = await self.get_exception(principal, system_id, exception_id)
+        if row.status != "REQUESTED":
+            raise ExceptionRejectedError("exception is not pending review")
+        row.status = "DENIED"
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system_id,
+            event_type="ExceptionDenied",
+            actor=_actor(principal),
+            payload={"exceptionId": row.id, "violationCode": row.violation_code},
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def revoke_exception(
+        self, principal: Principal, system_id: str, exception_id: str
+    ) -> ExceptionModel:
+        system = await self.get_system(principal, system_id)
+        if not principal.has_role(*EXCEPTION_GRANT_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to revoke exceptions")
+        row = await self.get_exception(principal, system_id, exception_id)
+        if row.status != "GRANTED":
+            raise ExceptionRejectedError("only a granted exception can be revoked")
+        now = utcnow()
+        row.status = "REVOKED"
+        row.revoked_at = now
+        await self._revoke_active_authorizations(principal, system, reason="EXCEPTION_REVOKED")
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="ExceptionRevoked",
+            actor=_actor(principal),
+            payload={"exceptionId": row.id, "violationCode": row.violation_code},
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
     def _issue_authorization(
         self,
         principal: Principal,
@@ -710,6 +976,142 @@ class GovernanceService:
                 payload={"authorizationIds": revoked_ids, "reason": reason},
             )
         return revoked_ids
+
+    async def _expire_stale_exceptions(
+        self, principal: Principal, system: AISystemModel, now: datetime
+    ) -> list[str]:
+        result = await self.session.scalars(
+            select(ExceptionModel).where(
+                ExceptionModel.tenant_id == principal.tenant_id,
+                ExceptionModel.system_id == system.id,
+                ExceptionModel.status == "GRANTED",
+            )
+        )
+        expired_ids: list[str] = []
+        for row in result:
+            if as_utc(row.expires_at) <= now:
+                row.status = "EXPIRED"
+                expired_ids.append(row.id)
+        if expired_ids:
+            await self._revoke_active_authorizations(principal, system, reason="EXCEPTION_EXPIRED")
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="ExceptionExpired",
+                actor=_actor(principal),
+                payload={"exceptionIds": expired_ids},
+            )
+        return expired_ids
+
+    async def _revoke_open_exceptions(
+        self, principal: Principal, system: AISystemModel, now: datetime, *, reason: str
+    ) -> list[str]:
+        result = await self.session.scalars(
+            select(ExceptionModel).where(
+                ExceptionModel.tenant_id == principal.tenant_id,
+                ExceptionModel.system_id == system.id,
+                ExceptionModel.status.in_(("REQUESTED", "GRANTED")),
+            )
+        )
+        revoked_ids: list[str] = []
+        for row in result:
+            row.status = "REVOKED"
+            row.revoked_at = now
+            revoked_ids.append(row.id)
+        if revoked_ids:
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="ExceptionRevoked",
+                actor=_actor(principal),
+                payload={"exceptionIds": revoked_ids, "reason": reason},
+            )
+        return revoked_ids
+
+    async def _close_open_case(
+        self, principal: Principal, system: AISystemModel, now: datetime, *, reason: str
+    ) -> None:
+        case = await self.open_case(principal, system.id)
+        if case is None:
+            return
+        case.status = "CLOSED"
+        case.closed_at = now
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="WorkflowCaseClosed",
+            actor=_actor(principal),
+            payload={"caseId": case.id, "reason": reason},
+        )
+
+    async def _sync_workflow_case(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        *,
+        decision: PolicyDecisionModel,
+        snapshot: GovernanceDecisionModel,
+        assessment: RiskAssessmentModel | None,
+        now: datetime,
+    ) -> None:
+        codes = [item["code"] for item in decision.reasons]
+        band = assessment.risk_band if assessment else None
+        open_case = await self.open_case(principal, system.id)
+        if decision.outcome in {"BLOCK", "REVIEW"}:
+            if open_case is None:
+                open_case = WorkflowCaseModel(
+                    id=new_id("case"),
+                    tenant_id=principal.tenant_id,
+                    system_id=system.id,
+                    decision_id=decision.id,
+                    snapshot_id=snapshot.id,
+                    case_type="GATE_REVIEW",
+                    status="OPEN",
+                    risk_band=band,
+                    reason_codes=codes,
+                    opened_at=now,
+                    due_at=compute_due_at(now, band),
+                    closed_at=None,
+                )
+                self.session.add(open_case)
+                await self.audit.append(
+                    tenant_id=principal.tenant_id,
+                    aggregate_id=system.id,
+                    event_type="WorkflowCaseOpened",
+                    actor=_actor(principal),
+                    payload={
+                        "caseId": open_case.id,
+                        "outcome": decision.outcome,
+                        "reasonCodes": codes,
+                        "dueAt": open_case.due_at.isoformat(),
+                    },
+                )
+                return
+            open_case.decision_id = decision.id
+            open_case.snapshot_id = snapshot.id
+            open_case.reason_codes = codes
+            if band:
+                open_case.risk_band = band
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="WorkflowCaseUpdated",
+                actor=_actor(principal),
+                payload={"caseId": open_case.id, "reasonCodes": codes, "outcome": decision.outcome},
+            )
+            return
+        if decision.outcome == "ALLOW" and open_case is not None:
+            open_case.status = "CLOSED"
+            open_case.closed_at = now
+            open_case.decision_id = decision.id
+            open_case.snapshot_id = snapshot.id
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="WorkflowCaseClosed",
+                actor=_actor(principal),
+                payload={"caseId": open_case.id, "outcome": "ALLOW"},
+            )
 
 
 def _actor(principal: Principal) -> dict[str, str]:
