@@ -307,6 +307,35 @@ export type AISystem360 = {
   latestOutboxEvents?: OutboxEvent[];
   githubChecks?: GitHubCheck[];
   latestGithubCheck?: GitHubCheck | null;
+  runtimeBinding?: RuntimeBinding | null;
+  adapterRuns?: AdapterRun[];
+  latestAdapterRun?: AdapterRun | null;
+};
+
+export type RuntimeBinding = {
+  id: string;
+  systemId: string;
+  provider: string;
+  service: string;
+  resourceRef: string;
+  region?: string | null;
+  accountRef?: string | null;
+  status: string;
+  createdAt: string;
+  supersededAt?: string | null;
+};
+
+export type AdapterRun = {
+  id: string;
+  systemId: string;
+  bindingId: string;
+  kind: string;
+  provider: string;
+  status: string;
+  action?: string | null;
+  result: Record<string, unknown>;
+  error?: string | null;
+  recordedAt: string;
 };
 
 export type OutboxEvent = {
