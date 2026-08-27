@@ -3,14 +3,23 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { getToken, setToken } from "@/lib/api";
+import { api, getToken, setToken } from "@/lib/api";
+import type { Principal } from "@/lib/types";
 
 export function Shell({ children }: { children: ReactNode }) {
   const [token, setTokenState] = useState("demo");
+  const [me, setMe] = useState<Principal | null>(null);
 
   useEffect(() => {
     setTokenState(getToken());
   }, []);
+
+  useEffect(() => {
+    api
+      .me()
+      .then(setMe)
+      .catch(() => setMe(null));
+  }, [token]);
 
   return (
     <div className="min-h-screen">
@@ -37,22 +46,29 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="flex min-h-screen flex-col">
           <header className="flex items-center justify-between border-b border-rule px-6 py-4">
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-navy/60">
-              Slice 7 · desired vs observed
+              Slice 8 · OIDC identity
             </p>
-            <label className="flex items-center gap-2 font-mono text-xs">
-              Acting as
-              <select
-                className="border border-rule bg-panel px-2 py-1"
-                value={token}
-                onChange={(event) => {
-                  setToken(event.target.value);
-                  setTokenState(event.target.value);
-                }}
-              >
-                <option value="demo">Engineer (demo)</option>
-                <option value="demo-reviewer">Reviewer (privacy/security/risk)</option>
-              </select>
-            </label>
+            <div className="flex items-center gap-4">
+              {me ? (
+                <p className="hidden font-mono text-[11px] text-navy/60 sm:block">
+                  {me.displayName} · {me.tenantId} · {me.authMethod}
+                </p>
+              ) : null}
+              <label className="flex items-center gap-2 font-mono text-xs">
+                Acting as
+                <select
+                  className="border border-rule bg-panel px-2 py-1"
+                  value={token}
+                  onChange={(event) => {
+                    setToken(event.target.value);
+                    setTokenState(event.target.value);
+                  }}
+                >
+                  <option value="demo">Engineer (demo)</option>
+                  <option value="demo-reviewer">Reviewer (privacy/security/risk)</option>
+                </select>
+              </label>
+            </div>
           </header>
           <main className="flex-1 px-6 py-8">{children}</main>
         </div>
