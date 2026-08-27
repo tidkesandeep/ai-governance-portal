@@ -1,0 +1,593 @@
+openapi: 3.1.1
+info:
+  title: AI Governance Control Plane API
+  version: 0.1.0
+  description: |
+    Slice 1 contract: AI system registry, deterministic risk assessment,
+    and a fail-closed deployment gate. The OpenAPI document is the source
+    of truth for HTTP APIs.
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://localhost:8000
+    description: Local
+tags:
+  - name: Health
+  - name: AI Systems
+  - name: Risk
+  - name: Policy
+  - name: Audit
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Liveness
+      operationId: getHealth
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /ready:
+    get:
+      tags: [Health]
+      security: []
+      summary: Readiness
+      operationId: getReady
+      responses:
+        "200":
+          description: Dependencies are reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Not ready
+  /v1/ai-systems:
+    get:
+      tags: [AI Systems]
+      summary: List AI systems for the authenticated tenant
+      operationId: listAISystems
+      responses:
+        "200":
+          description: Inventory page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystemList"
+    post:
+      tags: [AI Systems]
+      summary: Register an AI system
+      operationId: registerAISystem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AISystemRegistration"
+      responses:
+        "201":
+          description: Registered in DRAFT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /v1/ai-systems/{systemId}:
+    get:
+      tags: [AI Systems]
+      summary: Get AI System 360 payload
+      operationId: getAISystem
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "200":
+          description: Canonical system view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/assessments:
+    post:
+      tags: [Risk]
+      summary: Compute a deterministic risk assessment
+      operationId: assessAISystem
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "201":
+          description: New assessment snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskAssessment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/approvals:
+    post:
+      tags: [Policy]
+      summary: Record a control-function approval
+      operationId: recordApproval
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalRequest"
+      responses:
+        "201":
+          description: Approval recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/oversight:
+    post:
+      tags: [Policy]
+      summary: Attach human-oversight controls
+      operationId: attachOversight
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OversightRequest"
+      responses:
+        "200":
+          description: Oversight updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/deployments/gate:
+    post:
+      tags: [Policy]
+      summary: Evaluate the production deployment gate
+      operationId: evaluateDeploymentGate
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeploymentGateRequest"
+      responses:
+        "200":
+          description: Gate decision (ALLOW, REVIEW, or BLOCK)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDecision"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/audit-events:
+    get:
+      tags: [Audit]
+      summary: Append-only audit trail for an AI system
+      operationId: listAuditEvents
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "200":
+          description: Oldest-first hash-chained events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Slice 1 demo tokens `demo` (engineer) and `demo-reviewer` (privacy/security).
+  parameters:
+    systemId:
+      name: systemId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    NotFound:
+      description: Resource not found in this tenant
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationError:
+      description: Request failed schema validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        details:
+          type: object
+          additionalProperties: true
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+    AISystemRegistration:
+      type: object
+      required:
+        - name
+        - systemType
+        - businessPurpose
+        - owner
+        - environment
+        - dataClassification
+        - geography
+        - autonomyLevel
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        systemType:
+          $ref: "#/components/schemas/SystemType"
+        businessPurpose:
+          type: string
+        owner:
+          type: string
+        environment:
+          $ref: "#/components/schemas/Environment"
+        dataClassification:
+          $ref: "#/components/schemas/DataClassification"
+        geography:
+          type: string
+        autonomyLevel:
+          $ref: "#/components/schemas/AutonomyLevel"
+        modelRefs:
+          type: array
+          items:
+            type: string
+        vendorRefs:
+          type: array
+          items:
+            type: string
+        intendedUsers:
+          type: string
+        customerImpact:
+          $ref: "#/components/schemas/ImpactLevel"
+        financialImpact:
+          $ref: "#/components/schemas/ImpactLevel"
+        humanOversight:
+          type: array
+          items:
+            type: string
+        knownLimitations:
+          type: string
+        usesCustomerDecision:
+          type: boolean
+          default: false
+        publicEndpoint:
+          type: boolean
+          default: false
+        evaluationRefs:
+          type: array
+          items:
+            type: string
+        monitoringEnabled:
+          type: boolean
+          default: false
+    SystemType:
+      type: string
+      enum: [PREDICTIVE_MODEL, GENAI_APP, AGENT, THIRD_PARTY_LLM, DATASET]
+    Environment:
+      type: string
+      enum: [dev, test, staging, production]
+    DataClassification:
+      type: string
+      enum: [PUBLIC, INTERNAL, CONFIDENTIAL, PII, PCI, RESTRICTED]
+    AutonomyLevel:
+      type: string
+      enum: [HUMAN_IN_LOOP, ASSISTIVE, SEMI_AUTONOMOUS, AUTONOMOUS]
+    ImpactLevel:
+      type: string
+      enum: [NONE, LOW, MEDIUM, HIGH, CRITICAL]
+    LifecycleStatus:
+      type: string
+      enum:
+        - DRAFT
+        - ASSESSMENT_PENDING
+        - REVIEW_REQUIRED
+        - APPROVED
+        - BLOCKED
+        - DEPLOYMENT_PENDING
+    RiskBand:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    GateOutcome:
+      type: string
+      enum: [ALLOW, REVIEW, BLOCK]
+    AISystem:
+      type: object
+      required:
+        - id
+        - urn
+        - tenantId
+        - name
+        - systemType
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+        urn:
+          type: string
+        tenantId:
+          type: string
+        name:
+          type: string
+        systemType:
+          $ref: "#/components/schemas/SystemType"
+        businessPurpose:
+          type: string
+        owner:
+          type: string
+        environment:
+          $ref: "#/components/schemas/Environment"
+        dataClassification:
+          $ref: "#/components/schemas/DataClassification"
+        geography:
+          type: string
+        autonomyLevel:
+          $ref: "#/components/schemas/AutonomyLevel"
+        status:
+          $ref: "#/components/schemas/LifecycleStatus"
+        riskBand:
+          $ref: "#/components/schemas/RiskBand"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AISystemList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AISystem"
+    ApprovalRecord:
+      type: object
+      required: [function, approved, actorId, recordedAt]
+      properties:
+        function:
+          type: string
+          enum: [privacy, security, risk, owner]
+        approved:
+          type: boolean
+        actorId:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    RiskDriver:
+      type: object
+      required: [code, contribution]
+      properties:
+        code:
+          type: string
+        contribution:
+          type: number
+        detail:
+          type: string
+    RiskAssessment:
+      type: object
+      required:
+        - id
+        - systemId
+        - score
+        - riskBand
+        - confidence
+        - drivers
+        - engineVersion
+        - assessedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        score:
+          type: number
+        riskBand:
+          $ref: "#/components/schemas/RiskBand"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        drivers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskDriver"
+        hardConstraints:
+          type: array
+          items:
+            type: string
+        missingInputs:
+          type: array
+          items:
+            type: string
+        engineVersion:
+          type: string
+        assessedAt:
+          type: string
+          format: date-time
+    PolicyReason:
+      type: object
+      required: [code, severity]
+      properties:
+        code:
+          type: string
+        severity:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        message:
+          type: string
+    PolicyDecision:
+      type: object
+      required:
+        - id
+        - systemId
+        - outcome
+        - policyBundle
+        - reasons
+        - decidedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/GateOutcome"
+        policyBundle:
+          type: string
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyReason"
+        requiredActions:
+          type: array
+          items:
+            type: string
+        policyDigest:
+          type: string
+        inputDigest:
+          type: string
+        decidedAt:
+          type: string
+          format: date-time
+    AISystem360:
+      type: object
+      required: [system]
+      properties:
+        system:
+          $ref: "#/components/schemas/AISystem"
+        registration:
+          $ref: "#/components/schemas/AISystemRegistration"
+        latestAssessment:
+          $ref: "#/components/schemas/RiskAssessment"
+        latestDecision:
+          $ref: "#/components/schemas/PolicyDecision"
+        approvals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalRecord"
+        humanOversight:
+          type: array
+          items:
+            type: string
+    ApprovalRequest:
+      type: object
+      required: [function, approved]
+      properties:
+        function:
+          type: string
+          enum: [privacy, security, risk, owner]
+        approved:
+          type: boolean
+    OversightRequest:
+      type: object
+      required: [controls]
+      properties:
+        controls:
+          type: array
+          items:
+            type: string
+          minItems: 1
+    DeploymentGateRequest:
+      type: object
+      properties:
+        environment:
+          $ref: "#/components/schemas/Environment"
+        evidenceStale:
+          type: boolean
+          default: false
+    AuditEvent:
+      type: object
+      required:
+        - eventId
+        - eventType
+        - aggregateId
+        - occurredAt
+        - hash
+      properties:
+        eventId:
+          type: string
+        eventType:
+          type: string
+        aggregateId:
+          type: string
+        actor:
+          type: object
+          additionalProperties: true
+        occurredAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+        hash:
+          type: string
+        previousEventHash:
+          type: string
+    AuditEventList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
