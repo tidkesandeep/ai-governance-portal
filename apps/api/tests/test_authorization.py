@@ -33,6 +33,11 @@ def test_fingerprint_is_stable_and_version_sensitive() -> None:
         **{**PARTS, "incidents": [{"id": "inc_1", "severity": "CRITICAL", "status": "OPEN"}]}
     )
     assert "incidentDigest" in first
+    with_recon = build_snapshot_parts(
+        **{**PARTS, "reconciliation": {"status": "DRIFT", "reasons": ["ASSET_VERSION_MISMATCH"]}}
+    )
+    assert "reconciliationDigest" in first
+    assert governance_fingerprint(with_recon) != governance_fingerprint(first)
     assert governance_fingerprint(with_incident) != governance_fingerprint(first)
     action_first = build_action_snapshot_parts(
         asset_version_id="ver_1",
