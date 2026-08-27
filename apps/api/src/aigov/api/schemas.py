@@ -443,6 +443,9 @@ class AISystem360Out(BaseModel):
     latestOutboxEvents: list[OutboxEventOut] = Field(default_factory=list)
     githubChecks: list[GitHubCheckOut] = Field(default_factory=list)
     latestGithubCheck: GitHubCheckOut | None = None
+    runtimeBinding: RuntimeBindingOut | None = None
+    adapterRuns: list[AdapterRunOut] = Field(default_factory=list)
+    latestAdapterRun: AdapterRunOut | None = None
 
 
 class OutboxEventOut(BaseModel):
@@ -476,6 +479,54 @@ class GitHubCheckOut(BaseModel):
     htmlUrl: str | None = None
     decisionId: str | None = None
     recordedAt: datetime
+
+
+class RuntimeBindingRequest(BaseModel):
+    provider: Literal["aws", "azure", "gcp", "local"]
+    resourceRef: str = Field(min_length=1, max_length=256)
+    service: str | None = None
+    region: str | None = None
+    accountRef: str | None = None
+
+
+class RuntimeBindingOut(BaseModel):
+    id: str
+    systemId: str
+    provider: str
+    service: str
+    resourceRef: str
+    region: str | None = None
+    accountRef: str | None = None
+    status: str
+    createdAt: datetime
+    supersededAt: datetime | None = None
+
+
+class RuntimeCollectRequest(BaseModel):
+    scenario: Literal["in_sync", "drift", "stopped"] = "in_sync"
+
+
+class RuntimeEnforceRequest(BaseModel):
+    action: Literal["CONTAIN", "PERMIT"] = "CONTAIN"
+
+
+class AdapterRunOut(BaseModel):
+    id: str
+    systemId: str
+    bindingId: str
+    kind: str
+    provider: str
+    status: str
+    action: str | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+    recordedAt: datetime
+
+
+class AdapterStatusOut(BaseModel):
+    mode: str
+    providers: list[str]
+    objectStore: str
 
 
 class AuditEventOut(BaseModel):
