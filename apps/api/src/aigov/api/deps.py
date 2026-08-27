@@ -9,6 +9,7 @@ from aigov.config import Settings, get_settings
 from aigov.domains.identity.principal import Principal, principal_from_bearer
 from aigov.domains.policy.engine import EmbeddedPolicyEngine, PolicyEngine
 from aigov.infrastructure.db import session_scope
+from aigov.infrastructure.object_store import LocalObjectStore
 from aigov.infrastructure.opa import OPAPolicyEngine
 
 _bearer = HTTPBearer(auto_error=False)
@@ -53,5 +54,7 @@ async def current_principal(
 def governance_service(
     session: AsyncSession = Depends(db_session),
     engine: PolicyEngine = Depends(policy_engine),
+    settings: Settings = Depends(settings_dep),
 ) -> GovernanceService:
-    return GovernanceService(session, engine)
+    store = LocalObjectStore(settings.evidence_dir)
+    return GovernanceService(session, engine, store, settings)
