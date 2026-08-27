@@ -304,6 +304,33 @@ export type AISystem360 = {
   latestActionAuthorization?: ActionAuthorization | null;
   latestObservation?: RuntimeObservation | null;
   latestReconciliation?: ReconciliationResult | null;
+  latestOutboxEvents?: OutboxEvent[];
+  githubChecks?: GitHubCheck[];
+  latestGithubCheck?: GitHubCheck | null;
+};
+
+export type OutboxEvent = {
+  id: string;
+  eventId: string;
+  eventType: string;
+  aggregateId: string;
+  occurredAt: string;
+  publishedAt?: string | null;
+  publishAttempts: number;
+  lastError?: string | null;
+};
+
+export type GitHubCheck = {
+  id: string;
+  systemId: string;
+  sha: string;
+  repo?: string | null;
+  name: string;
+  status: string;
+  conclusion: string;
+  htmlUrl?: string | null;
+  decisionId?: string | null;
+  recordedAt: string;
 };
 
 export type Registration = {
