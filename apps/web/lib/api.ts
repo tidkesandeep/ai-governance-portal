@@ -126,5 +126,21 @@ export const api = {
       `/v1/ai-systems/${id}/action-authorizations/${authorizationId}/verify`,
       { method: "POST", body: JSON.stringify({}) },
     ),
+  recordObservation: (
+    id: string,
+    body: {
+      running?: boolean;
+      assetVersionId?: string;
+      environment?: string;
+      cloud?: string;
+      region?: string;
+      fingerprint?: string;
+      observedAt?: string;
+    },
+  ) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/observations`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
