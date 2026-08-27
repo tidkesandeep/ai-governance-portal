@@ -46,7 +46,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="flex min-h-screen flex-col">
           <header className="flex items-center justify-between border-b border-rule px-6 py-4">
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-navy/60">
-              Slice 8 · OIDC identity
+              Slice 9 · Operator plane
             </p>
             <div className="flex items-center gap-4">
               {me ? (
