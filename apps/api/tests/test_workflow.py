@@ -43,6 +43,7 @@ def test_exception_request_rejects_non_waivable_and_past_expiry() -> None:
     assert rejected.value.code == "EXCEPTION_NOT_WAIVABLE"
     assert "EVIDENCE_HASH_FAILURE" in NON_WAIVABLE
     assert "RUNTIME_INCIDENT" in NON_WAIVABLE
+    assert "RUNTIME_DRIFT" in NON_WAIVABLE
     with pytest.raises(ExceptionRuleError):
         validate_exception_request(
             violation_code="MISSING_REQUIRED_EVIDENCE",
