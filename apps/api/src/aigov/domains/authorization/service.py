@@ -59,6 +59,31 @@ def build_snapshot_parts(
     }
 
 
+def build_action_snapshot_parts(
+    *,
+    asset_version_id: str,
+    action: str,
+    resource: str,
+    amount: float | None,
+    capability: dict[str, Any] | None,
+    deploy_authorized: bool,
+    incidents: list[dict[str, Any]] | None = None,
+    policy_bundle: str,
+    policy_digest: str | None,
+) -> dict[str, Any]:
+    return {
+        "assetVersionId": asset_version_id,
+        "action": action,
+        "resource": resource,
+        "amount": amount,
+        "capabilityDigest": digest_payload(capability or {}),
+        "deployAuthorized": deploy_authorized,
+        "incidentDigest": digest_payload({"incidents": incidents or []}),
+        "policyBundle": policy_bundle,
+        "policyDigest": policy_digest,
+    }
+
+
 def sign_authorization(
     *,
     secret: str,
