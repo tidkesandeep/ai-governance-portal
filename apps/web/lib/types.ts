@@ -119,6 +119,35 @@ export type GovernanceException = {
   revokedAt?: string | null;
 };
 
+export type Finding = {
+  id: string;
+  systemId: string;
+  incidentId?: string | null;
+  boundVersionId: string;
+  findingType: string;
+  severity: string;
+  summary: string;
+  detector: string;
+  status: string;
+  recordedBy: string;
+  recordedAt: string;
+  resolvedAt?: string | null;
+  dismissedAt?: string | null;
+};
+
+export type Incident = {
+  id: string;
+  systemId: string;
+  severity: string;
+  status: string;
+  title: string;
+  summary: string;
+  openedBy: string;
+  resolvedBy?: string | null;
+  openedAt: string;
+  resolvedAt?: string | null;
+};
+
 export type Approval = {
   function: string;
   approved: boolean;
@@ -177,6 +206,9 @@ export type AISystem360 = {
   latestCase?: WorkflowCase | null;
   cases: WorkflowCase[];
   exceptions: GovernanceException[];
+  findings: Finding[];
+  incidents: Incident[];
+  latestIncident?: Incident | null;
 };
 
 export type Registration = {
