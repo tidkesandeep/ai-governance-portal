@@ -4,7 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { FRAUD_SAMPLE, INTERNAL_SAMPLE } from "@/lib/samples";
+import { AGENT_SAMPLE, FRAUD_SAMPLE, INTERNAL_SAMPLE } from "@/lib/samples";
 import type { Registration } from "@/lib/types";
 
 const empty: Registration = {
@@ -81,12 +81,19 @@ export default function RegisterPage() {
         >
           Load fraud model sample
         </button>
-        <button
+          <button
           type="button"
           className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
           onClick={() => setForm(INTERNAL_SAMPLE)}
         >
           Load internal analytics sample
+        </button>
+        <button
+          type="button"
+          className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+          onClick={() => setForm(AGENT_SAMPLE)}
+        >
+          Load refund agent sample
         </button>
       </div>
       <form className="mt-8 grid gap-5" onSubmit={onSubmit}>
