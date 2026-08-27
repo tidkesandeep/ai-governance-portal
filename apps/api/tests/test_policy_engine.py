@@ -125,3 +125,72 @@ def test_missing_assessment_blocks() -> None:
     result = evaluate_deployment_document(_base(risk={}))
     assert result.outcome == "BLOCK"
     assert any(reason.code == "MISSING_ASSESSMENT" for reason in result.reasons)
+
+
+def test_granted_exception_allows_missing_evidence() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            asset={
+                "risk_band": "HIGH",
+                "data_classification": "INTERNAL",
+                "autonomy_level": "HUMAN_IN_LOOP",
+                "uses_customer_decision": False,
+            },
+            approvals={"security": True},
+            risk={"band": "HIGH", "confidence": 0.9},
+            evidence={
+                "stale": False,
+                "controls": [
+                    {
+                        "id": "CTRL-ML-PERF-001",
+                        "type": "EVALUATION_RUN",
+                        "required": True,
+                        "status": "UNKNOWN",
+                    }
+                ],
+            },
+            exceptions=[
+                {
+                    "violation_code": "MISSING_REQUIRED_EVIDENCE",
+                    "status": "GRANTED",
+                    "expired": False,
+                }
+            ],
+        )
+    )
+    assert result.outcome == "ALLOW"
+
+
+def test_hash_failure_cannot_be_waived() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            asset={
+                "risk_band": "HIGH",
+                "data_classification": "INTERNAL",
+                "autonomy_level": "HUMAN_IN_LOOP",
+                "uses_customer_decision": False,
+            },
+            approvals={"security": True},
+            risk={"band": "HIGH", "confidence": 0.9},
+            evidence={
+                "stale": False,
+                "controls": [
+                    {
+                        "id": "CTRL-ML-PERF-001",
+                        "type": "EVALUATION_RUN",
+                        "required": True,
+                        "status": "FAIL",
+                    }
+                ],
+            },
+            exceptions=[
+                {
+                    "violation_code": "EVIDENCE_HASH_FAILURE",
+                    "status": "GRANTED",
+                    "expired": False,
+                }
+            ],
+        )
+    )
+    assert result.outcome == "BLOCK"
+    assert any(reason.code == "EVIDENCE_HASH_FAILURE" for reason in result.reasons)
