@@ -6,6 +6,21 @@ import { api } from "@/lib/api";
 import { bandClass, outcomeClass } from "@/lib/style";
 import type { AISystem360, AuditEvent, PolicyDecision } from "@/lib/types";
 
+const SAMPLES: Record<string, { filename: string; content: string }> = {
+  MODEL_CARD: {
+    filename: "model-card.md",
+    content: "# Fraud Risk Model v4.2\nIntended use: payment fraud scoring. No raw customer payloads.",
+  },
+  EVALUATION_RUN: {
+    filename: "eval.json",
+    content: '{"recall": 0.96, "precision": 0.94, "dataset": "holdout-2026-08"}',
+  },
+  FAIRNESS_EVALUATION: {
+    filename: "fairness.json",
+    content: '{"group_gap": 0.02, "methodology": "equalized-odds"}',
+  },
+};
+
 export default function System360Page() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -76,6 +91,89 @@ export default function System360Page() {
         <Fact label="Geography" value={data.system.geography} />
         <Fact label="Customer decision" value={String(data.registration.usesCustomerDecision)} />
         <Fact label="Oversight" value={data.humanOversight.join(", ") || "none"} />
+        <Fact label="Asset version" value={data.system.currentVersionId ?? "—"} />
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div className="border border-rule bg-panel p-5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-serif text-2xl">Control posture</h2>
+            <button
+              className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+              onClick={() => run("version", () => api.cutVersion(id))}
+              disabled={busy !== null}
+            >
+              Cut new version
+            </button>
+          </div>
+          <p className="mt-1 text-sm text-navy/60">
+            UNKNOWN and STALE cannot satisfy a mandatory control. Evidence is bound to the current
+            asset version.
+          </p>
+          <ul className="mt-4 space-y-2">
+            {(data.controls ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No mandatory controls until the system is scored.</li>
+            ) : (
+              data.controls.map((control) => (
+                <li key={control.controlId} className="border border-rule px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs">{control.controlId}</p>
+                    <span className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(control.status)}`}>
+                      {control.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-navy/70">{control.reason}</p>
+                  <p className="font-mono text-[11px] text-navy/50">
+                    {control.evidenceType} · max age {control.maxAgeDays}d
+                  </p>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Evidence</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            Artifacts are hashed on attach. Content is untrusted and never treated as policy.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {Object.keys(SAMPLES).map((type) => (
+              <button
+                key={type}
+                className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+                disabled={busy !== null}
+                onClick={() =>
+                  run(`evidence-${type}`, () =>
+                    api.attachEvidence(id, {
+                      type,
+                      filename: SAMPLES[type].filename,
+                      content: SAMPLES[type].content,
+                    }),
+                  )
+                }
+              >
+                Attach {type.replaceAll("_", " ").toLowerCase()}
+              </button>
+            ))}
+          </div>
+          <ul className="mt-4 space-y-2">
+            {(data.evidence ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No evidence attached.</li>
+            ) : (
+              data.evidence.map((item) => (
+                <li key={item.id} className="border border-rule px-3 py-2">
+                  <p className="font-mono text-xs">
+                    {item.type} · {item.filename} · {item.verificationStatus}
+                  </p>
+                  <p className="break-all font-mono text-[11px] text-navy/50">{item.sha256}</p>
+                  <p className="font-mono text-[11px] text-navy/50">
+                    bound {item.boundVersionId}
+                  </p>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -246,7 +344,7 @@ function WhyBlocked({ decision }: { decision?: PolicyDecision | null }) {
         </span>
       </div>
       {decision.outcome === "ALLOW" ? (
-        <p className="mt-3 text-sm text-forest">All Slice-1 controls passed. Authorization can proceed.</p>
+        <p className="mt-3 text-sm text-forest">Required controls passed for this decision snapshot.</p>
       ) : (
         <ul className="mt-4 space-y-3">
           {decision.reasons.map((reason) => (
