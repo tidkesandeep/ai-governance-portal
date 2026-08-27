@@ -440,6 +440,42 @@ class AISystem360Out(BaseModel):
     latestActionAuthorization: ActionAuthorizationOut | None = None
     latestObservation: RuntimeObservationOut | None = None
     latestReconciliation: ReconciliationOut | None = None
+    latestOutboxEvents: list[OutboxEventOut] = Field(default_factory=list)
+    githubChecks: list[GitHubCheckOut] = Field(default_factory=list)
+    latestGithubCheck: GitHubCheckOut | None = None
+
+
+class OutboxEventOut(BaseModel):
+    id: str
+    eventId: str
+    eventType: str
+    aggregateId: str
+    occurredAt: datetime
+    publishedAt: datetime | None = None
+    publishAttempts: int = 0
+    lastError: str | None = None
+
+
+class OutboxPublishOut(BaseModel):
+    published: int
+
+
+class GitHubCheckRequest(BaseModel):
+    sha: str = Field(min_length=1, max_length=64)
+    repo: str | None = None
+
+
+class GitHubCheckOut(BaseModel):
+    id: str
+    systemId: str
+    sha: str
+    repo: str | None = None
+    name: str
+    status: str
+    conclusion: str
+    htmlUrl: str | None = None
+    decisionId: str | None = None
+    recordedAt: datetime
 
 
 class AuditEventOut(BaseModel):
