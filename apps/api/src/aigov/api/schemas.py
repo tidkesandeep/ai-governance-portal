@@ -190,6 +190,45 @@ class AuthorizationVerifyOut(BaseModel):
     authorization: DeploymentAuthorizationOut
 
 
+class ExceptionRequest(BaseModel):
+    violationCode: str = Field(min_length=1, max_length=64)
+    justification: str = Field(min_length=8, max_length=2000)
+    expiresAt: datetime | None = None
+    controlId: str | None = None
+
+
+class WorkflowCaseOut(BaseModel):
+    id: str
+    systemId: str
+    decisionId: str | None = None
+    snapshotId: str | None = None
+    caseType: str
+    status: str
+    riskBand: str | None = None
+    reasonCodes: list[str] = Field(default_factory=list)
+    slaStatus: str
+    openedAt: datetime
+    dueAt: datetime
+    closedAt: datetime | None = None
+
+
+class ExceptionOut(BaseModel):
+    id: str
+    systemId: str
+    caseId: str | None = None
+    violationCode: str
+    controlId: str | None = None
+    boundVersionId: str
+    justification: str
+    status: str
+    requestedBy: str
+    grantedBy: str | None = None
+    requestedAt: datetime
+    grantedAt: datetime | None = None
+    expiresAt: datetime
+    revokedAt: datetime | None = None
+
+
 class ApprovalOut(BaseModel):
     function: str
     approved: bool
@@ -231,6 +270,9 @@ class AISystem360Out(BaseModel):
     controls: list[ControlAssessmentOut] = Field(default_factory=list)
     latestSnapshot: GovernanceSnapshotOut | None = None
     latestAuthorization: DeploymentAuthorizationOut | None = None
+    latestCase: WorkflowCaseOut | None = None
+    cases: list[WorkflowCaseOut] = Field(default_factory=list)
+    exceptions: list[ExceptionOut] = Field(default_factory=list)
 
 
 class AuditEventOut(BaseModel):
