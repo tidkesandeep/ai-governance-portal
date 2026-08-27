@@ -45,9 +45,26 @@ ACTIONS = {
     "RUNTIME_INCIDENT": "resolve the open incident and re-evaluate the deployment gate",
 }
 
+ACTION_BUNDLE = "agent-actions@0.1.0"
+ACTION_DIGEST = "sha256:slice6-agent-actions-0.1.0"
+
+ACTION_ACTIONS = {
+    "NOT_AN_AGENT": "register an AGENT system before requesting action authorization",
+    "NOT_DEPLOY_AUTHORIZED": "evaluate the deployment gate to ALLOW before the agent may act",
+    "SYSTEM_BLOCKED": "clear the blocked lifecycle and re-evaluate the deployment gate",
+    "RUNTIME_INCIDENT": "resolve the open incident and re-authorize the action",
+    "UNDECLARED_ACTION": "declare a version-bound capability for this action",
+    "RESOURCE_NOT_PERMITTED": "declare a capability whose resource pattern covers this resource",
+    "AMOUNT_EXCEEDS_LIMIT": "request a lower amount or raise the capability ceiling",
+    "MISSING_ACTION_APPROVAL": "have a reviewer approve the capability",
+    "POLICY_ENGINE_UNAVAILABLE": "restore the policy engine and retry action authorization",
+}
+
 
 class PolicyEngine(Protocol):
     async def evaluate_deployment(self, document: dict[str, Any]) -> PolicyEvaluation: ...
+
+    async def evaluate_action(self, document: dict[str, Any]) -> PolicyEvaluation: ...
 
 
 def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
@@ -189,3 +206,93 @@ def _waived_codes(document: dict[str, Any]) -> set[str]:
 class EmbeddedPolicyEngine:
     async def evaluate_deployment(self, document: dict[str, Any]) -> PolicyEvaluation:
         return evaluate_deployment_document(document)
+
+    async def evaluate_action(self, document: dict[str, Any]) -> PolicyEvaluation:
+        return evaluate_action_document(document)
+
+
+def evaluate_action_document(document: dict[str, Any]) -> PolicyEvaluation:
+    """Embedded evaluator. Must stay aligned with policies/rego/action.rego."""
+    reasons: list[PolicyReason] = []
+    asset = document.get("asset") or {}
+    request = document.get("request") or {}
+    capability = document.get("capability")
+    incidents = document.get("incidents") or []
+
+    if asset.get("system_type") != "AGENT":
+        reasons.append(
+            PolicyReason(
+                "NOT_AN_AGENT",
+                "HIGH",
+                "only AGENT systems may request action authorization",
+            )
+        )
+    if not asset.get("deploy_authorized"):
+        reasons.append(
+            PolicyReason(
+                "NOT_DEPLOY_AUTHORIZED",
+                "HIGH",
+                "the agent is not currently authorized to operate",
+            )
+        )
+    if asset.get("status") == "BLOCKED":
+        reasons.append(
+            PolicyReason(
+                "SYSTEM_BLOCKED",
+                "HIGH",
+                "a blocked system cannot act",
+            )
+        )
+    if any((item or {}).get("status") == "OPEN" for item in incidents):
+        reasons.append(
+            PolicyReason(
+                "RUNTIME_INCIDENT",
+                "HIGH",
+                "an open runtime incident revokes action authorization",
+            )
+        )
+    if capability is None:
+        reasons.append(
+            PolicyReason(
+                "UNDECLARED_ACTION",
+                "HIGH",
+                "the requested action is not declared for the current asset version",
+            )
+        )
+    else:
+        if capability.get("resource_match") is not True:
+            reasons.append(
+                PolicyReason(
+                    "RESOURCE_NOT_PERMITTED",
+                    "HIGH",
+                    "the requested resource is outside the declared capability pattern",
+                )
+            )
+        max_amount = capability.get("max_amount")
+        amount = request.get("amount")
+        if max_amount is not None and amount is not None and amount > max_amount:
+            reasons.append(
+                PolicyReason(
+                    "AMOUNT_EXCEEDS_LIMIT",
+                    "HIGH",
+                    "the requested amount exceeds the capability ceiling",
+                )
+            )
+        if capability.get("requires_approval") and not capability.get("approved"):
+            reasons.append(
+                PolicyReason(
+                    "MISSING_ACTION_APPROVAL",
+                    "HIGH",
+                    "privileged or approval-gated capabilities require a reviewer grant",
+                )
+            )
+
+    outcome = "DENY" if reasons else "ALLOW"
+    actions = [ACTION_ACTIONS[reason.code] for reason in reasons if reason.code in ACTION_ACTIONS]
+    return PolicyEvaluation(
+        outcome=outcome,
+        reasons=reasons,
+        required_actions=actions,
+        policy_bundle=ACTION_BUNDLE,
+        policy_digest=ACTION_DIGEST,
+    )
