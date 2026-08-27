@@ -19,6 +19,8 @@ from aigov.api.schemas import (
     EvidenceAttachRequest,
     ExceptionRequest,
     FindingRequest,
+    GitHubCheckOut,
+    GitHubCheckRequest,
     ObservationRequest,
     OversightRequest,
     PolicyDecisionOut,
@@ -31,6 +33,7 @@ from aigov.api.serialize import (
     audit_out,
     authorization_out,
     gate_out,
+    github_check_out,
     system_360,
     system_out,
 )
@@ -146,6 +149,8 @@ async def _system_360(
     action_authorization = await svc.latest_action_authorization(principal, system_id)
     observation = await svc.latest_observation(principal, system_id)
     reconciliation = await svc.latest_reconciliation(principal, system_id)
+    outbox_events = await svc.list_outbox(principal, system_id)
+    github_checks = await svc.list_github_checks(principal, system_id)
     return system_360(
         system,
         assessment,
@@ -164,6 +169,8 @@ async def _system_360(
         action_authorization,
         observation,
         reconciliation,
+        outbox_events,
+        github_checks,
     )
 
 
@@ -672,6 +679,25 @@ async def record_observation(
         raise _not_found() from exc
     except ObservationRejectedError as exc:
         raise _observation_rejected(exc) from exc
+
+
+@router.post("/{system_id}/github-checks", response_model=GitHubCheckOut, status_code=201)
+async def record_github_check(
+    system_id: str,
+    body: GitHubCheckRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> GitHubCheckOut:
+    try:
+        row = await svc.record_github_check(
+            principal,
+            system_id,
+            sha=body.sha,
+            repo=body.repo,
+        )
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    return github_check_out(row)
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
