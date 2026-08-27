@@ -1,6 +1,6 @@
 # AI Governance Control Plane
 
-Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–9** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence, an OPA-aligned deployment gate, immutable decision snapshots, short-lived authorization, workflow cases with SLA clocks, time-bounded exceptions, findings that promote to incidents and revoke live authorization, agent action/resource authorization, desired versus observed reconciliation, OIDC bearer identity, Alembic schema migrations, a transactional audit outbox, an operator CLI, GitHub deployment checks, append-only audit events, and a thin Next.js portal.
+Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–10** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence, an OPA-aligned deployment gate, immutable decision snapshots, short-lived authorization, workflow cases with SLA clocks, time-bounded exceptions, findings that promote to incidents and revoke live authorization, agent action/resource authorization, desired versus observed reconciliation, OIDC bearer identity, Alembic schema migrations, a transactional audit outbox, an operator CLI, GitHub deployment checks, cloud-neutral execution-plane adapters for AWS, Azure, and GCP, append-only audit events, and a thin Next.js portal.
 
 The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy or keep operating **or act**, whether the authorized version is what is actually running, and what evidence/decision snapshot proves that. Identity is bound to the bearer token.
 
@@ -30,7 +30,7 @@ The portal is not a model registry. It exists to answer: what AI exists, what ri
 | Transactional audit outbox (log sink; Kafka optional) | Yes |
 | Operator CLI (`aigov gate`, `migrate`, `outbox publish`) | Yes |
 | GitHub deployment checks / HMAC webhooks | Yes |
-| Cloud execution-plane adapters | Later slices |
+| Execution-plane adapters (AWS / Azure / GCP, fake default) | Yes |
 
 ## Quick start
 
@@ -77,6 +77,7 @@ The header switch on the portal selects the first two.
 16. After a fraud-model **ALLOW**, **Report in-sync** → `IN_SYNC`. **Report drifted version** → tokens revoked, status **BLOCKED**, gate **BLOCK** `RUNTIME_DRIFT`. Report in-sync again → still **BLOCKED** with no new token until you re-evaluate the gate.
 17. Header shows the bound principal from `GET /v1/me` (demo engineer vs reviewer). Production deploys set `AIGOV_DEMO_AUTH=false` and `AIGOV_OIDC_ISSUER` / `AIGOV_OIDC_AUDIENCE`; tenant and roles then come only from the JWT.
 18. `aigov gate <systemId>` exits 0/1/2 for ALLOW/BLOCK/REVIEW. **Publish outbox** drains dual-written audit events. **Record GitHub check** stores the latest gate conclusion against a commit SHA (and posts a Check Run when `AIGOV_GITHUB_TOKEN` is set).
+19. **Bind AWS SageMaker** → **Discover** → **Collect in-sync** → `IN_SYNC`. **Collect drifted version** → tokens revoked, adapter **CONTAIN**, gate **BLOCK** `RUNTIME_DRIFT`. Live clouds require `AIGOV_CLOUD_ADAPTER_MODE=live` and `aigov[aws]` / `[azure]` / `[gcp]`; without them the adapter fails closed.
 
 Optional: load the internal analytics sample and gate with “simulate stale evidence” to see **REVIEW**. Attach an evaluation dated 2020 to a HIGH system to see **STALE** block.
 
