@@ -47,6 +47,8 @@ export default function System360Page() {
   const [verification, setVerification] = useState<AuthorizationVerify | null>(null);
   const [actionDecision, setActionDecision] = useState<ActionDecision | null>(null);
   const [actionVerification, setActionVerification] = useState<ActionAuthorizationVerify | null>(null);
+  const [checkSha, setCheckSha] = useState("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  const [checkRepo, setCheckRepo] = useState("acme/fraud-model");
 
   const refresh = useCallback(async () => {
     const [payload, events] = await Promise.all([api.get(id), api.audit(id)]);
@@ -716,6 +718,104 @@ export default function System360Page() {
               <p className="mt-2 text-sm text-navy/60">No reconciliation computed yet.</p>
             )}
           </div>
+        </div>
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Outbound events</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            Every hash-chained audit event is dual-written to the outbox in the same transaction.
+            Publish drains unpublished rows to structured logs, or Kafka when{" "}
+            <span className="font-mono">AIGOV_KAFKA_BOOTSTRAP_SERVERS</span> is set.
+          </p>
+          <div className="mt-4">
+            <button
+              className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() => run("outbox", () => api.publishOutbox())}
+            >
+              Publish outbox
+            </button>
+          </div>
+          <ul className="mt-4 space-y-2">
+            {(data.latestOutboxEvents ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No outbound events yet.</li>
+            ) : (
+              (data.latestOutboxEvents ?? []).slice(0, 8).map((item) => (
+                <li key={item.id} className="border border-rule px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs">{item.eventType}</p>
+                    <span
+                      className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(
+                        item.publishedAt ? "IN_SYNC" : "UNKNOWN",
+                      )}`}
+                    >
+                      {item.publishedAt ? "published" : "pending"}
+                    </span>
+                  </div>
+                  <p className="mt-1 break-all font-mono text-[11px] text-navy/50">{item.eventId}</p>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">GitHub checks</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            Records the latest deployment-gate conclusion against a commit SHA. Missing GitHub
+            credentials still persist the result so the gate remains the system of record.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <input
+              className="min-w-[12rem] flex-1 border border-rule bg-panel px-2 py-1 font-mono text-[11px]"
+              value={checkSha}
+              onChange={(event) => setCheckSha(event.target.value)}
+              placeholder="commit sha"
+            />
+            <input
+              className="min-w-[10rem] border border-rule bg-panel px-2 py-1 font-mono text-[11px]"
+              value={checkRepo}
+              onChange={(event) => setCheckRepo(event.target.value)}
+              placeholder="owner/repo"
+            />
+            <button
+              className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null || !checkSha.trim()}
+              onClick={() =>
+                run("gh-check", () =>
+                  api.recordGithubCheck(id, {
+                    sha: checkSha.trim(),
+                    repo: checkRepo.trim() || undefined,
+                  }),
+                )
+              }
+            >
+              Record check
+            </button>
+          </div>
+          {data.latestGithubCheck ? (
+            <div className="mt-4 border border-rule px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-mono text-xs">{data.latestGithubCheck.name}</p>
+                <span
+                  className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(
+                    data.latestGithubCheck.conclusion,
+                  )}`}
+                >
+                  {data.latestGithubCheck.conclusion}
+                </span>
+              </div>
+              <p className="mt-1 break-all font-mono text-[11px] text-navy/50">
+                {data.latestGithubCheck.sha}
+              </p>
+              <p className="font-mono text-[11px] text-navy/50">
+                {data.latestGithubCheck.repo ?? "no repo"} · {data.latestGithubCheck.status}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-navy/60">No GitHub check recorded.</p>
+          )}
         </div>
       </section>
 
