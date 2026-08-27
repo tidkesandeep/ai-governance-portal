@@ -1,7 +1,6 @@
 package aigov.deployment
 
-# Slice-1 production deployment gate.
-# Input document is assembled by the control plane; this bundle only decides.
+# Production deployment gate. Input is assembled by the control plane.
 
 default outcome := "ALLOW"
 
@@ -26,7 +25,25 @@ violation[{"code": "MISSING_RISK_APPROVAL", "severity": "HIGH", "message": "risk
 	not input.approvals.risk
 }
 
+violation[{"code": "MISSING_REQUIRED_EVIDENCE", "severity": "HIGH", "message": "unknown evidence cannot satisfy a mandatory control"}] {
+	control := input.evidence.controls[_]
+	control.required == true
+	control.status == "UNKNOWN"
+}
+
+violation[{"code": "EVIDENCE_HASH_FAILURE", "severity": "HIGH", "message": "evidence hash verification failed"}] {
+	control := input.evidence.controls[_]
+	control.required == true
+	control.status == "FAIL"
+}
+
+violation[{"code": "STALE_EVIDENCE", "severity": "HIGH", "message": "stale evidence cannot satisfy a HIGH or CRITICAL control"}] {
+	high_risk
+	stale_required
+}
+
 violation[{"code": "STALE_EVIDENCE", "severity": "MEDIUM", "message": "evidence is stale relative to the control freshness policy"}] {
+	not high_risk
 	input.evidence.stale == true
 }
 
@@ -36,6 +53,16 @@ violation[{"code": "LOW_CONFIDENCE", "severity": "MEDIUM", "message": "risk conf
 
 violation[{"code": "MISSING_ASSESSMENT", "severity": "HIGH", "message": "deployment gate requires a current risk assessment"}] {
 	not input.risk.band
+}
+
+stale_required {
+	control := input.evidence.controls[_]
+	control.required == true
+	control.status == "STALE"
+}
+
+stale_required {
+	input.evidence.stale == true
 }
 
 high_risk {
@@ -94,4 +121,6 @@ actions := {
 	"STALE_EVIDENCE": "refresh evaluation evidence",
 	"LOW_CONFIDENCE": "supply missing risk attributes and reassess",
 	"MISSING_ASSESSMENT": "run risk assessment",
+	"MISSING_REQUIRED_EVIDENCE": "attach required evidence for the current asset version",
+	"EVIDENCE_HASH_FAILURE": "re-upload evidence; stored digest does not match bytes",
 }
