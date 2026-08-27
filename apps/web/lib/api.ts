@@ -1,6 +1,8 @@
 "use client";
 
 import type {
+  ActionAuthorizationVerify,
+  ActionDecision,
   AISystem360,
   AuditEvent,
   AuthorizationVerify,
@@ -104,5 +106,25 @@ export const api = {
     request<AISystem360>(`/v1/ai-systems/${id}/findings/${findingId}/dismiss`, { method: "POST" }),
   resolveIncident: (id: string, incidentId: string) =>
     request<AISystem360>(`/v1/ai-systems/${id}/incidents/${incidentId}/resolve`, { method: "POST" }),
+  declareCapability: (
+    id: string,
+    body: { action: string; resourcePattern: string; maxAmount?: number; requiresApproval?: boolean },
+  ) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/capabilities`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  approveCapability: (id: string, capabilityId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/capabilities/${capabilityId}/approve`, { method: "POST" }),
+  authorizeAction: (id: string, body: { action: string; resource: string; amount?: number }) =>
+    request<ActionDecision>(`/v1/ai-systems/${id}/actions/authorize`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  verifyActionAuthorization: (id: string, authorizationId: string) =>
+    request<ActionAuthorizationVerify>(
+      `/v1/ai-systems/${id}/action-authorizations/${authorizationId}/verify`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
