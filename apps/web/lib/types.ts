@@ -47,6 +47,44 @@ export type PolicyDecision = {
   policyDigest?: string | null;
   inputDigest?: string | null;
   decidedAt: string;
+  fingerprint?: string | null;
+  snapshotId?: string | null;
+  authorizationId?: string | null;
+};
+
+export type GovernanceSnapshot = {
+  id: string;
+  systemId: string;
+  policyDecisionId: string;
+  outcome: GateOutcome;
+  assetVersionId: string;
+  fingerprint: string;
+  snapshot: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type DeploymentAuthorization = {
+  id: string;
+  systemId: string;
+  decisionId: string;
+  assetVersionId: string;
+  environment: string;
+  cloud: string;
+  region?: string | null;
+  audience: string;
+  nonce: string;
+  fingerprint: string;
+  signature: string;
+  issuedAt: string;
+  expiresAt: string;
+  revokedAt?: string | null;
+  consumedAt?: string | null;
+};
+
+export type AuthorizationVerify = {
+  outcome: "ALLOW" | "DENY";
+  reasons: string[];
+  authorization: DeploymentAuthorization;
 };
 
 export type Approval = {
@@ -102,6 +140,8 @@ export type AISystem360 = {
   humanOversight: string[];
   evidence: EvidenceArtifact[];
   controls: ControlAssessment[];
+  latestSnapshot?: GovernanceSnapshot | null;
+  latestAuthorization?: DeploymentAuthorization | null;
 };
 
 export type Registration = {
