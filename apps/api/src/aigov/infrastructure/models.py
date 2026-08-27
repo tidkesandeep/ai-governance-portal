@@ -271,3 +271,34 @@ class ActionAuthorizationModel(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeObservationModel(Base):
+    __tablename__ = "runtime_observations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    bound_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    environment: Mapped[str] = mapped_column(String(32))
+    cloud: Mapped[str] = mapped_column(String(64))
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    running: Mapped[bool] = mapped_column(Boolean)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    recorded_by: Mapped[str] = mapped_column(String(64))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ReconciliationResultModel(Base):
+    __tablename__ = "reconciliation_results"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    observation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
+    reasons: Mapped[list] = mapped_column(JSON)
+    desired: Mapped[dict] = mapped_column(JSON)
+    observed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reconciled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
