@@ -63,6 +63,11 @@ violation[{"code": "MISSING_ASSESSMENT", "severity": "HIGH", "message": "deploym
 	not input.risk.band
 }
 
+violation[{"code": "RUNTIME_INCIDENT", "severity": "HIGH", "message": "an open runtime incident revokes deployment authorization"}] {
+	incident := input.incidents[_]
+	incident.status == "OPEN"
+}
+
 stale_required {
 	control := input.evidence.controls[_]
 	control.required == true
@@ -77,6 +82,7 @@ non_waivable := {
 	"EVIDENCE_HASH_FAILURE": true,
 	"MISSING_ASSESSMENT": true,
 	"POLICY_ENGINE_UNAVAILABLE": true,
+	"RUNTIME_INCIDENT": true,
 }
 
 waived(code) {
@@ -145,4 +151,5 @@ actions := {
 	"MISSING_ASSESSMENT": "run risk assessment",
 	"MISSING_REQUIRED_EVIDENCE": "attach required evidence for the current asset version",
 	"EVIDENCE_HASH_FAILURE": "re-upload evidence; stored digest does not match bytes",
+	"RUNTIME_INCIDENT": "resolve the open incident and re-evaluate the deployment gate",
 }
