@@ -1,13 +1,13 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.6.0
+  version: 0.7.0
   description: |
-    Slice 6 contract: AI system registry, deterministic risk, hashed evidence,
+    Slice 7 contract: AI system registry, deterministic risk, hashed evidence,
     fail-closed deployment gate, immutable snapshots, short-lived authorization,
     workflow cases with SLA clocks, time-bounded exceptions, findings, incidents,
-    runtime revocation, and agent action/resource authorization. An undeclared
-    tool cannot act; an open incident immediately invalidates action tokens.
+    runtime revocation, agent action/resource authorization, and desired versus
+    observed reconciliation. A drifted runtime immediately revokes live tokens.
   license:
     name: Apache-2.0
 servers:
@@ -24,6 +24,7 @@ tags:
   - name: Workflow
   - name: Findings
   - name: Agents
+  - name: Reconciliation
 security:
   - bearerAuth: []
 paths:
@@ -580,6 +581,30 @@ paths:
                 $ref: "#/components/schemas/ActionAuthorization"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/observations:
+    post:
+      tags: [Reconciliation]
+      summary: Record an observed runtime state and reconcile it against the authorized desired state
+      operationId: recordObservation
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ObservationRequest"
+      responses:
+        "201":
+          description: Observation recorded; HIGH drift revokes authorization and blocks the system
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/ai-systems/{systemId}/versions:
     post:
       tags: [AI Systems]
@@ -1011,6 +1036,10 @@ components:
           $ref: "#/components/schemas/ActionDecision"
         latestActionAuthorization:
           $ref: "#/components/schemas/ActionAuthorization"
+        latestObservation:
+          $ref: "#/components/schemas/RuntimeObservation"
+        latestReconciliation:
+          $ref: "#/components/schemas/ReconciliationResult"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -1533,6 +1562,89 @@ components:
             type: string
         authorization:
           $ref: "#/components/schemas/ActionAuthorization"
+    ObservationRequest:
+      type: object
+      properties:
+        running:
+          type: boolean
+          default: true
+        assetVersionId:
+          type: string
+        environment:
+          type: string
+        cloud:
+          type: string
+          default: local
+        region:
+          type: string
+        fingerprint:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+    RuntimeObservation:
+      type: object
+      required:
+        - id
+        - systemId
+        - boundVersionId
+        - environment
+        - cloud
+        - running
+        - observedAt
+        - recordedBy
+        - recordedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        boundVersionId:
+          type: string
+        environment:
+          type: string
+        cloud:
+          type: string
+        region:
+          type: string
+        fingerprint:
+          type: string
+        running:
+          type: boolean
+        observedAt:
+          type: string
+          format: date-time
+        recordedBy:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    ReconciliationResult:
+      type: object
+      required: [id, systemId, status, reconciledAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        observationId:
+          type: string
+        status:
+          type: string
+          enum: [IN_SYNC, DRIFT, UNKNOWN]
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyReason"
+        desired:
+          type: object
+          additionalProperties: true
+        observed:
+          type: object
+          additionalProperties: true
+        reconciledAt:
+          type: string
+          format: date-time
     AuditEvent:
       type: object
       required:
