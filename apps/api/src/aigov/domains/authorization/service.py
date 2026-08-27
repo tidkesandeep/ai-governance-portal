@@ -42,6 +42,7 @@ def build_snapshot_parts(
     policy_digest: str | None,
     engine_versions: dict[str, str],
     exceptions: list[dict[str, Any]] | None = None,
+    incidents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "assetVersionId": asset_version_id,
@@ -51,6 +52,7 @@ def build_snapshot_parts(
         "evidenceDigest": digest_payload({"hashes": sorted(evidence_hashes)}),
         "approvalDigest": digest_payload(approvals),
         "exceptionDigest": digest_payload({"exceptions": exceptions or []}),
+        "incidentDigest": digest_payload({"incidents": incidents or []}),
         "policyBundle": policy_bundle,
         "policyDigest": policy_digest,
         "engineVersions": engine_versions,
