@@ -1,11 +1,11 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Slice 1 contract: AI system registry, deterministic risk assessment,
-    and a fail-closed deployment gate. The OpenAPI document is the source
-    of truth for HTTP APIs.
+    Slice 2 contract: AI system registry, deterministic risk assessment,
+    hashed evidence with freshness and version binding, and a fail-closed
+    deployment gate. Unknown or stale evidence cannot satisfy a mandatory control.
   license:
     name: Apache-2.0
 servers:
@@ -17,6 +17,7 @@ tags:
   - name: Risk
   - name: Policy
   - name: Audit
+  - name: Evidence
 security:
   - bearerAuth: []
 paths:
@@ -197,6 +198,67 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditEventList"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/evidence:
+    post:
+      tags: [Evidence]
+      summary: Attach hashed evidence bound to the current asset version
+      operationId: attachEvidence
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceAttachRequest"
+      responses:
+        "201":
+          description: Evidence stored and hashed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/evidence/{evidenceId}/verify:
+    post:
+      tags: [Evidence]
+      summary: Recompute the digest of stored bytes and compare to the record
+      operationId: verifyEvidence
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - name: evidenceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Verification status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/versions:
+    post:
+      tags: [AI Systems]
+      summary: Cut a new asset version so prior evidence no longer satisfies controls
+      operationId: cutAssetVersion
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "201":
+          description: New current version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
         "404":
           $ref: "#/components/responses/NotFound"
 components:
@@ -387,6 +449,8 @@ components:
           $ref: "#/components/schemas/LifecycleStatus"
         riskBand:
           $ref: "#/components/schemas/RiskBand"
+        currentVersionId:
+          type: string
         createdAt:
           type: string
           format: date-time
@@ -530,6 +594,14 @@ components:
           type: array
           items:
             type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceArtifact"
+        controls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ControlAssessment"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -556,6 +628,76 @@ components:
         evidenceStale:
           type: boolean
           default: false
+    EvidenceAttachRequest:
+      type: object
+      required: [type, filename, content]
+      properties:
+        type:
+          type: string
+          enum: [MODEL_CARD, EVALUATION_RUN, FAIRNESS_EVALUATION, SECURITY_SCAN, SBOM]
+        filename:
+          type: string
+        content:
+          type: string
+        collectedAt:
+          type: string
+          format: date-time
+        boundVersionId:
+          type: string
+        mediaType:
+          type: string
+    EvidenceArtifact:
+      type: object
+      required: [id, systemId, boundVersionId, type, sha256, verificationStatus, collectedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        boundVersionId:
+          type: string
+        type:
+          type: string
+        filename:
+          type: string
+        uri:
+          type: string
+        sha256:
+          type: string
+        bytesSize:
+          type: integer
+        collectorVersion:
+          type: string
+        verificationStatus:
+          type: string
+          enum: [VERIFIED, FAIL]
+        collectedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ControlAssessment:
+      type: object
+      required: [controlId, evidenceType, required, status, reason]
+      properties:
+        controlId:
+          type: string
+        evidenceType:
+          type: string
+        required:
+          type: boolean
+        status:
+          type: string
+          enum: [PASS, FAIL, STALE, UNKNOWN, NOT_APPLICABLE]
+        evidenceId:
+          type: string
+        reason:
+          type: string
+        maxAgeDays:
+          type: integer
+        sha256:
+          type: string
     AuditEvent:
       type: object
       required:
