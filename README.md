@@ -1,8 +1,8 @@
 # AI Governance Control Plane
 
-Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–5** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence, an OPA-aligned deployment gate, immutable decision snapshots, short-lived authorization, workflow cases with SLA clocks, time-bounded exceptions, findings that promote to incidents and revoke live authorization, append-only audit events, and a thin Next.js portal.
+Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–6** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence, an OPA-aligned deployment gate, immutable decision snapshots, short-lived authorization, workflow cases with SLA clocks, time-bounded exceptions, findings that promote to incidents and revoke live authorization, agent action/resource authorization, append-only audit events, and a thin Next.js portal.
 
-The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy or keep operating, and what evidence/decision snapshot proves that.
+The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy or keep operating **or act**, and what evidence/decision snapshot proves that.
 
 ## Current slice
 
@@ -23,7 +23,8 @@ The portal is not a model registry. It exists to answer: what AI exists, what ri
 | Workflow cases with SLA clocks | Yes |
 | Time-bounded exceptions (SoD, version-bound, expiring) | Yes |
 | Findings, incidents, and runtime revocation | Yes |
-| Cloud adapters, Kafka, agent authz | Later slices |
+| Agent action and resource authorization | Yes |
+| Cloud adapters, Kafka, OIDC | Later slices |
 
 ## Quick start
 
@@ -66,6 +67,7 @@ The header switch on the portal selects the first two.
 12. Record a **CRITICAL** eval regression → authorization verify returns **DENY** (`REVOKED`); gate **BLOCK** `RUNTIME_INCIDENT`
 13. Resolve the incident as reviewer (engineer is rejected by SoD) → re-gate **ALLOW**
 14. Record a **MEDIUM** data-drift finding → authorization stays valid until a reviewer **Promote**s it
+15. Or register the **refund agent sample**, attach evidence, gate **ALLOW**, declare `payments.refund` on `account:retail-*`, reviewer **Approve**, then authorize a retail refund → **ALLOW**. Wholesale or undeclared actions **DENY**. A CRITICAL finding revokes the action token.
 
 Optional: load the internal analytics sample and gate with “simulate stale evidence” to see **REVIEW**. Attach an evaluation dated 2020 to a HIGH system to see **STALE** block.
 
