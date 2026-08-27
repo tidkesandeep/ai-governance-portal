@@ -1,13 +1,14 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.7.0
+  version: 0.8.0
   description: |
-    Slice 7 contract: AI system registry, deterministic risk, hashed evidence,
+    Slice 8 contract: AI system registry, deterministic risk, hashed evidence,
     fail-closed deployment gate, immutable snapshots, short-lived authorization,
     workflow cases with SLA clocks, time-bounded exceptions, findings, incidents,
-    runtime revocation, agent action/resource authorization, and desired versus
-    observed reconciliation. A drifted runtime immediately revokes live tokens.
+    runtime revocation, agent action/resource authorization, desired versus
+    observed reconciliation, and OIDC bearer identity. Tenant, actor, and roles
+    come from the validated token, never from the request body.
   license:
     name: Apache-2.0
 servers:
@@ -25,6 +26,7 @@ tags:
   - name: Findings
   - name: Agents
   - name: Reconciliation
+  - name: Identity
 security:
   - bearerAuth: []
 paths:
@@ -56,6 +58,26 @@ paths:
                 $ref: "#/components/schemas/HealthStatus"
         "503":
           description: Not ready
+  /v1/me:
+    get:
+      tags: [Identity]
+      summary: Return the authenticated principal bound to the bearer token
+      operationId: getMe
+      responses:
+        "200":
+          description: Current principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: OIDC issuer or JWKS is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /v1/ai-systems:
     get:
       tags: [AI Systems]
@@ -626,7 +648,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Slice 1 demo tokens `demo` (engineer) and `demo-reviewer` (privacy/security).
+      description: Slice 8 bearer JWT from the configured OIDC issuer, or local demo tokens `demo` / `demo-reviewer` when demo auth is enabled.
   parameters:
     systemId:
       name: systemId
@@ -671,6 +693,12 @@ components:
       schema:
         type: string
   responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
     NotFound:
       description: Resource not found in this tenant
       content:
@@ -715,6 +743,25 @@ components:
           type: array
           items:
             type: string
+    Principal:
+      type: object
+      required: [tenantId, actorId, actorType, roles, displayName, authMethod]
+      properties:
+        tenantId:
+          type: string
+        actorId:
+          type: string
+        actorType:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        displayName:
+          type: string
+        authMethod:
+          type: string
+          enum: [demo, oidc]
     AISystemRegistration:
       type: object
       required:
