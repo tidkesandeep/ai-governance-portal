@@ -3,14 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-POLICY_BUNDLE = "payments-baseline@0.3.0"
-POLICY_DIGEST = "sha256:slice4-payments-baseline-0.3.0"
+POLICY_BUNDLE = "payments-baseline@0.4.0"
+POLICY_DIGEST = "sha256:slice5-payments-baseline-0.4.0"
 
 NON_WAIVABLE = frozenset(
     {
         "EVIDENCE_HASH_FAILURE",
         "MISSING_ASSESSMENT",
         "POLICY_ENGINE_UNAVAILABLE",
+        "RUNTIME_INCIDENT",
     }
 )
 
@@ -41,6 +42,7 @@ ACTIONS = {
     "MISSING_ASSESSMENT": "run risk assessment",
     "MISSING_REQUIRED_EVIDENCE": "attach required evidence for the current asset version",
     "EVIDENCE_HASH_FAILURE": "re-upload evidence; stored digest does not match bytes",
+    "RUNTIME_INCIDENT": "resolve the open incident and re-evaluate the deployment gate",
 }
 
 
@@ -148,6 +150,14 @@ def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
                 "LOW_CONFIDENCE",
                 "MEDIUM",
                 "risk confidence is below the automated-gate threshold",
+            )
+        )
+    if any((item or {}).get("status") == "OPEN" for item in document.get("incidents") or []):
+        reasons.append(
+            PolicyReason(
+                "RUNTIME_INCIDENT",
+                "HIGH",
+                "an open runtime incident revokes deployment authorization",
             )
         )
 
