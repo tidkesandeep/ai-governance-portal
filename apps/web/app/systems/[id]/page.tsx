@@ -6,6 +6,12 @@ import { api } from "@/lib/api";
 import { bandClass, outcomeClass } from "@/lib/style";
 import type { AISystem360, AuditEvent, AuthorizationVerify, PolicyDecision } from "@/lib/types";
 
+const NON_WAIVABLE = new Set([
+  "EVIDENCE_HASH_FAILURE",
+  "MISSING_ASSESSMENT",
+  "POLICY_ENGINE_UNAVAILABLE",
+]);
+
 const SAMPLES: Record<string, { filename: string; content: string }> = {
   MODEL_CARD: {
     filename: "model-card.md",
@@ -382,6 +388,116 @@ export default function System360Page() {
             No authorization yet. BLOCK and REVIEW persist a snapshot but do not mint a token.
           </p>
         )}
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Workflow case</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            BLOCK and REVIEW open a case. The SLA clock starts once and is not reset by re-gating.
+            ALLOW closes the case.
+          </p>
+          {data.latestCase ? (
+            <div className="mt-4 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`border px-2 py-1 font-mono text-xs ${bandClass(data.latestCase.status)}`}>
+                  {data.latestCase.status}
+                </span>
+                <span className={`border px-2 py-1 font-mono text-xs ${bandClass(data.latestCase.slaStatus)}`}>
+                  SLA {data.latestCase.slaStatus}
+                </span>
+              </div>
+              <p className="font-mono text-[11px] text-navy/50">
+                due {new Date(data.latestCase.dueAt).toISOString()}
+                <br />
+                {data.latestCase.caseType} · {data.latestCase.reasonCodes.join(", ") || "no codes"}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-navy/60">No workflow case yet. Evaluate the gate to open one.</p>
+          )}
+        </div>
+
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Exceptions</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            A granted exception waives one named violation until it expires or the asset version
+            changes. Hash failures cannot be waived. The engineer requests; the reviewer grants.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(decision?.reasons ?? [])
+              .map((reason) => reason.code)
+              .filter((code, index, all) => all.indexOf(code) === index)
+              .filter((code) => !NON_WAIVABLE.has(code))
+              .map((code) => (
+                <button
+                  key={code}
+                  className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    run(`exception-${code}`, () =>
+                      api.requestException(
+                        id,
+                        code,
+                        "Time-bounded hotfix while the required evidence is refreshed.",
+                      ),
+                    )
+                  }
+                >
+                  Request {code.replaceAll("_", " ").toLowerCase()}
+                </button>
+              ))}
+          </div>
+          <ul className="mt-4 space-y-2">
+            {(data.exceptions ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No exceptions requested.</li>
+            ) : (
+              data.exceptions.map((item) => (
+                <li key={item.id} className="border border-rule px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs">{item.violationCode}</p>
+                    <span className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(item.status)}`}>
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-navy/70">{item.justification}</p>
+                  <p className="font-mono text-[11px] text-navy/50">
+                    expires {new Date(item.expiresAt).toISOString()}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {item.status === "REQUESTED" ? (
+                      <>
+                        <button
+                          className="border border-ink px-2 py-1 font-mono text-[11px] uppercase"
+                          disabled={busy !== null}
+                          onClick={() => run(`grant-${item.id}`, () => api.grantException(id, item.id))}
+                        >
+                          Grant
+                        </button>
+                        <button
+                          className="border border-rule px-2 py-1 font-mono text-[11px] uppercase"
+                          disabled={busy !== null}
+                          onClick={() => run(`deny-${item.id}`, () => api.denyException(id, item.id))}
+                        >
+                          Deny
+                        </button>
+                      </>
+                    ) : null}
+                    {item.status === "GRANTED" ? (
+                      <button
+                        className="border border-carmine/40 px-2 py-1 font-mono text-[11px] uppercase text-carmine"
+                        disabled={busy !== null}
+                        onClick={() => run(`revoke-exc-${item.id}`, () => api.revokeException(id, item.id))}
+                      >
+                        Revoke exception
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
       </section>
 
       <section className="border border-rule bg-panel p-5">
