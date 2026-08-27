@@ -204,6 +204,31 @@ export type ActionAuthorizationVerify = {
   authorization: ActionAuthorization;
 };
 
+export type RuntimeObservation = {
+  id: string;
+  systemId: string;
+  boundVersionId: string;
+  environment: string;
+  cloud: string;
+  region?: string | null;
+  fingerprint?: string | null;
+  running: boolean;
+  observedAt: string;
+  recordedBy: string;
+  recordedAt: string;
+};
+
+export type ReconciliationResult = {
+  id: string;
+  systemId: string;
+  observationId?: string | null;
+  status: "IN_SYNC" | "DRIFT" | "UNKNOWN";
+  reasons: PolicyReason[];
+  desired: Record<string, unknown>;
+  observed?: Record<string, unknown> | null;
+  reconciledAt: string;
+};
+
 export type Approval = {
   function: string;
   approved: boolean;
@@ -268,6 +293,8 @@ export type AISystem360 = {
   capabilities: Capability[];
   latestActionDecision?: ActionDecision | null;
   latestActionAuthorization?: ActionAuthorization | null;
+  latestObservation?: RuntimeObservation | null;
+  latestReconciliation?: ReconciliationResult | null;
 };
 
 export type Registration = {
