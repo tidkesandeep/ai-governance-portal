@@ -5,15 +5,19 @@ from aigov.api.schemas import (
     AISystemOut,
     ApprovalOut,
     AuditEventOut,
+    ControlAssessmentOut,
+    EvidenceArtifactOut,
     PolicyDecisionOut,
     PolicyReasonOut,
     RiskAssessmentOut,
     RiskDriverOut,
 )
+from aigov.domains.evidence.service import ControlAssessment
 from aigov.infrastructure.models import (
     AISystemModel,
     ApprovalModel,
     AuditEventModel,
+    EvidenceArtifactModel,
     PolicyDecisionModel,
     RiskAssessmentModel,
 )
@@ -34,6 +38,7 @@ def system_out(row: AISystemModel, risk_band: str | None = None) -> AISystemOut:
         autonomyLevel=row.autonomy_level,
         status=row.status,
         riskBand=risk_band,
+        currentVersionId=row.current_version_id,
         createdAt=row.created_at,
         updatedAt=row.updated_at,
     )
@@ -90,11 +95,43 @@ def audit_out(row: AuditEventModel) -> AuditEventOut:
     )
 
 
+def evidence_out(row: EvidenceArtifactModel) -> EvidenceArtifactOut:
+    return EvidenceArtifactOut(
+        id=row.id,
+        systemId=row.system_id,
+        boundVersionId=row.bound_version_id,
+        type=row.evidence_type,
+        filename=row.filename,
+        uri=row.uri,
+        sha256=row.sha256,
+        bytesSize=row.bytes_size,
+        collectorVersion=row.collector_version,
+        verificationStatus=row.verification_status,
+        collectedAt=row.collected_at,
+        createdAt=row.created_at,
+    )
+
+
+def control_out(item: ControlAssessment) -> ControlAssessmentOut:
+    return ControlAssessmentOut(
+        controlId=item.control_id,
+        evidenceType=item.evidence_type,
+        required=item.required,
+        status=item.status,
+        evidenceId=item.evidence_id,
+        reason=item.reason,
+        maxAgeDays=item.max_age_days,
+        sha256=item.sha256,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
     decision: PolicyDecisionModel | None,
     approvals: list[ApprovalModel],
+    evidence: list[EvidenceArtifactModel] | None = None,
+    controls: list[ControlAssessment] | None = None,
 ) -> AISystem360Out:
     return AISystem360Out(
         system=system_out(system, assessment.risk_band if assessment else None),
@@ -103,4 +140,6 @@ def system_360(
         latestDecision=decision_out(decision) if decision else None,
         approvals=[approval_out(row) for row in approvals],
         humanOversight=system.human_oversight,
+        evidence=[evidence_out(row) for row in evidence or []],
+        controls=[control_out(item) for item in controls or []],
     )
