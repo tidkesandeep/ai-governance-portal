@@ -142,3 +142,25 @@ test_hash_failure_exception_is_ignored {
 	}
 	result == "BLOCK"
 }
+
+test_open_incident_blocks {
+	result := outcome with input as {
+		"asset": {
+			"risk_band": "LOW",
+			"data_classification": "INTERNAL",
+			"autonomy_level": "HUMAN_IN_LOOP",
+			"uses_customer_decision": false,
+		},
+		"approvals": {},
+		"human_oversight": {"controls": []},
+		"risk": {"band": "LOW", "confidence": 0.9},
+		"evidence": {"stale": false},
+		"incidents": [{"id": "inc_1", "status": "OPEN", "severity": "CRITICAL"}],
+		"exceptions": [{
+			"violation_code": "RUNTIME_INCIDENT",
+			"status": "GRANTED",
+			"expired": false,
+		}],
+	}
+	result == "BLOCK"
+}
