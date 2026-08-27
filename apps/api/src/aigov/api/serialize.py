@@ -13,8 +13,10 @@ from aigov.api.schemas import (
     EvidenceArtifactOut,
     ExceptionOut,
     FindingOut,
+    GitHubCheckOut,
     GovernanceSnapshotOut,
     IncidentOut,
+    OutboxEventOut,
     PolicyDecisionOut,
     PolicyReasonOut,
     ReconciliationOut,
@@ -35,9 +37,11 @@ from aigov.infrastructure.models import (
     AuditEventModel,
     CapabilityModel,
     DeploymentAuthorizationModel,
+    EventOutboxModel,
     EvidenceArtifactModel,
     ExceptionModel,
     FindingModel,
+    GitHubCheckModel,
     GovernanceDecisionModel,
     IncidentModel,
     PolicyDecisionModel,
@@ -364,6 +368,34 @@ def reconciliation_out(row: ReconciliationResultModel) -> ReconciliationOut:
     )
 
 
+def outbox_out(row: EventOutboxModel) -> OutboxEventOut:
+    return OutboxEventOut(
+        id=row.id,
+        eventId=row.event_id,
+        eventType=row.event_type,
+        aggregateId=row.aggregate_id,
+        occurredAt=row.occurred_at,
+        publishedAt=row.published_at,
+        publishAttempts=int(row.publish_attempts or 0),
+        lastError=row.last_error,
+    )
+
+
+def github_check_out(row: GitHubCheckModel) -> GitHubCheckOut:
+    return GitHubCheckOut(
+        id=row.id,
+        systemId=row.system_id,
+        sha=row.sha,
+        repo=row.repo,
+        name=row.name,
+        status=row.status,
+        conclusion=row.conclusion,
+        htmlUrl=row.html_url,
+        decisionId=row.decision_id,
+        recordedAt=row.recorded_at,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
@@ -382,6 +414,8 @@ def system_360(
     action_authorization: ActionAuthorizationModel | None = None,
     observation: RuntimeObservationModel | None = None,
     reconciliation: ReconciliationResultModel | None = None,
+    outbox_events: list[EventOutboxModel] | None = None,
+    github_checks: list[GitHubCheckModel] | None = None,
 ) -> AISystem360Out:
     case_items = [case_out(row) for row in cases or []]
     incident_items = [incident_out(row) for row in incidents or []]
@@ -437,4 +471,7 @@ def system_360(
         ),
         latestObservation=observation_out(observation) if observation else None,
         latestReconciliation=reconciliation_out(reconciliation) if reconciliation else None,
+        latestOutboxEvents=[outbox_out(row) for row in outbox_events or []],
+        githubChecks=[github_check_out(row) for row in github_checks or []],
+        latestGithubCheck=github_check_out(github_checks[0]) if github_checks else None,
     )
