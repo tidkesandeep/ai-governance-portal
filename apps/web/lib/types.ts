@@ -87,6 +87,38 @@ export type AuthorizationVerify = {
   authorization: DeploymentAuthorization;
 };
 
+export type WorkflowCase = {
+  id: string;
+  systemId: string;
+  decisionId?: string | null;
+  snapshotId?: string | null;
+  caseType: string;
+  status: string;
+  riskBand?: string | null;
+  reasonCodes: string[];
+  slaStatus: string;
+  openedAt: string;
+  dueAt: string;
+  closedAt?: string | null;
+};
+
+export type GovernanceException = {
+  id: string;
+  systemId: string;
+  caseId?: string | null;
+  violationCode: string;
+  controlId?: string | null;
+  boundVersionId: string;
+  justification: string;
+  status: string;
+  requestedBy: string;
+  grantedBy?: string | null;
+  requestedAt: string;
+  grantedAt?: string | null;
+  expiresAt: string;
+  revokedAt?: string | null;
+};
+
 export type Approval = {
   function: string;
   approved: boolean;
@@ -142,6 +174,9 @@ export type AISystem360 = {
   controls: ControlAssessment[];
   latestSnapshot?: GovernanceSnapshot | null;
   latestAuthorization?: DeploymentAuthorization | null;
+  latestCase?: WorkflowCase | null;
+  cases: WorkflowCase[];
+  exceptions: GovernanceException[];
 };
 
 export type Registration = {
