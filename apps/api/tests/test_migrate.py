@@ -22,8 +22,10 @@ def test_upgrade_head_creates_outbox_and_github_tables(tmp_path) -> None:
     tables = set(inspect(engine).get_table_names())
     assert "event_outbox" in tables
     assert "github_checks" in tables
+    assert "runtime_bindings" in tables
+    assert "adapter_runs" in tables
     assert "alembic_version" in tables
     assert "ai_systems" in tables
     with engine.connect() as conn:
         revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert revision == "009_operator_plane"
+    assert revision == "010_cloud_adapters"
