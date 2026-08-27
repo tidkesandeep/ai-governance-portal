@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { bandClass, outcomeClass } from "@/lib/style";
-import type { AISystem360, AuditEvent, PolicyDecision } from "@/lib/types";
+import type { AISystem360, AuditEvent, AuthorizationVerify, PolicyDecision } from "@/lib/types";
 
 const SAMPLES: Record<string, { filename: string; content: string }> = {
   MODEL_CARD: {
@@ -29,6 +29,7 @@ export default function System360Page() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  const [verification, setVerification] = useState<AuthorizationVerify | null>(null);
 
   const refresh = useCallback(async () => {
     const [payload, events] = await Promise.all([api.get(id), api.audit(id)]);
@@ -59,6 +60,8 @@ export default function System360Page() {
 
   const assessment = data.latestAssessment;
   const decision = data.latestDecision;
+  const authorization = data.latestAuthorization;
+  const snapshot = data.latestSnapshot;
   const approvalState = Object.fromEntries(data.approvals.map((row) => [row.function, row]));
 
   return (
@@ -293,9 +296,92 @@ export default function System360Page() {
               bundle {decision.policyBundle}
               <br />
               input {decision.inputDigest}
+              {decision.fingerprint ? (
+                <>
+                  <br />
+                  fingerprint {decision.fingerprint}
+                </>
+              ) : null}
             </p>
           ) : null}
         </div>
+      </section>
+
+      <section className="border border-rule bg-panel p-5">
+        <h2 className="font-serif text-2xl">Deployment authorization</h2>
+        <p className="mt-1 text-sm text-navy/60">
+          ALLOW mints a short-lived HMAC-signed token bound to the decision fingerprint and asset
+          version. Verify returns ALLOW or DENY. Revoke or cut a version immediately invalidates it.
+        </p>
+        {authorization ? (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`border px-2 py-1 font-mono text-xs ${outcomeClass(authorization.revokedAt ? "DENY" : "ALLOW")}`}>
+                {authorization.revokedAt ? "REVOKED" : authorization.consumedAt ? "CONSUMED" : "ISSUED"}
+              </span>
+              <span className="font-mono text-[11px] text-navy/50">
+                expires {new Date(authorization.expiresAt).toISOString()}
+              </span>
+            </div>
+            <p className="break-all font-mono text-[11px] text-navy/50">
+              id {authorization.id}
+              <br />
+              fingerprint {authorization.fingerprint}
+              <br />
+              version {authorization.assetVersionId}
+              {snapshot ? (
+                <>
+                  <br />
+                  snapshot {snapshot.id}
+                </>
+              ) : null}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+                disabled={busy !== null}
+                onClick={() =>
+                  run("verify-authz", async () => {
+                    const result = await api.verifyAuthorization(id, authorization.id);
+                    setVerification(result);
+                  })
+                }
+              >
+                {busy === "verify-authz" ? "Verifying…" : "Verify"}
+              </button>
+              <button
+                className="border border-carmine/40 px-3 py-1 font-mono text-[11px] uppercase text-carmine"
+                disabled={busy !== null || Boolean(authorization.revokedAt)}
+                onClick={() =>
+                  run("revoke-authz", async () => {
+                    await api.revokeAuthorization(id, authorization.id);
+                    setVerification(null);
+                  })
+                }
+              >
+                Revoke
+              </button>
+            </div>
+            {verification ? (
+              <div className="border border-rule px-3 py-2">
+                <p className={`inline-block px-2 py-0.5 font-mono text-xs ${outcomeClass(verification.outcome)}`}>
+                  {verification.outcome}
+                </p>
+                {verification.reasons.length > 0 ? (
+                  <p className="mt-2 font-mono text-[11px] text-navy/70">
+                    {verification.reasons.join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm text-forest">Signature, expiry, revocation, and version all match.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-navy/60">
+            No authorization yet. BLOCK and REVIEW persist a snapshot but do not mint a token.
+          </p>
+        )}
       </section>
 
       <section className="border border-rule bg-panel p-5">
