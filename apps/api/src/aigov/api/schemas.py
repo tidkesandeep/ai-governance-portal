@@ -229,6 +229,52 @@ class ExceptionOut(BaseModel):
     revokedAt: datetime | None = None
 
 
+FindingType = Literal[
+    "EVAL_REGRESSION",
+    "FAIRNESS_DRIFT",
+    "SECURITY_SIGNAL",
+    "DATA_DRIFT",
+    "POLICY_VIOLATION",
+    "HUMAN_REPORT",
+]
+
+
+class FindingRequest(BaseModel):
+    findingType: FindingType
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    summary: str = Field(min_length=8, max_length=2000)
+    detector: str = Field(default="HUMAN", min_length=1, max_length=64)
+
+
+class FindingOut(BaseModel):
+    id: str
+    systemId: str
+    incidentId: str | None = None
+    boundVersionId: str
+    findingType: str
+    severity: str
+    summary: str
+    detector: str
+    status: str
+    recordedBy: str
+    recordedAt: datetime
+    resolvedAt: datetime | None = None
+    dismissedAt: datetime | None = None
+
+
+class IncidentOut(BaseModel):
+    id: str
+    systemId: str
+    severity: str
+    status: str
+    title: str
+    summary: str
+    openedBy: str
+    resolvedBy: str | None = None
+    openedAt: datetime
+    resolvedAt: datetime | None = None
+
+
 class ApprovalOut(BaseModel):
     function: str
     approved: bool
@@ -273,6 +319,9 @@ class AISystem360Out(BaseModel):
     latestCase: WorkflowCaseOut | None = None
     cases: list[WorkflowCaseOut] = Field(default_factory=list)
     exceptions: list[ExceptionOut] = Field(default_factory=list)
+    findings: list[FindingOut] = Field(default_factory=list)
+    incidents: list[IncidentOut] = Field(default_factory=list)
+    latestIncident: IncidentOut | None = None
 
 
 class AuditEventOut(BaseModel):
