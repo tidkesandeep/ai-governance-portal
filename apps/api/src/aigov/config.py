@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     oidc_tenant_claim: str = "tid"
     oidc_roles_claim: str = "roles"
     oidc_jwks_cache_seconds: int = 300
+    kafka_bootstrap_servers: str | None = None
+    kafka_topic: str = "aigov.governance.events"
+    github_webhook_secret: str = ""
+    github_token: str | None = None
+    api_url: str = "http://localhost:8000"
 
     @property
     def cors_origin_list(self) -> list[str]:
