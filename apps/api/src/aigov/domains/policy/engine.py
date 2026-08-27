@@ -3,8 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-POLICY_BUNDLE = "payments-baseline@0.2.0"
-POLICY_DIGEST = "sha256:slice2-payments-baseline-0.2.0"
+POLICY_BUNDLE = "payments-baseline@0.3.0"
+POLICY_DIGEST = "sha256:slice4-payments-baseline-0.3.0"
+
+NON_WAIVABLE = frozenset(
+    {
+        "EVIDENCE_HASH_FAILURE",
+        "MISSING_ASSESSMENT",
+        "POLICY_ENGINE_UNAVAILABLE",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -143,6 +151,9 @@ def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
             )
         )
 
+    waived = _waived_codes(document)
+    reasons = [reason for reason in reasons if reason.code not in waived]
+
     if any(reason.severity == "HIGH" for reason in reasons):
         outcome = "BLOCK"
     elif reasons:
@@ -152,6 +163,17 @@ def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
 
     actions = [ACTIONS[reason.code] for reason in reasons if reason.code in ACTIONS]
     return PolicyEvaluation(outcome=outcome, reasons=reasons, required_actions=actions)
+
+
+def _waived_codes(document: dict[str, Any]) -> set[str]:
+    codes: set[str] = set()
+    for exception in document.get("exceptions") or []:
+        if exception.get("status") != "GRANTED" or exception.get("expired"):
+            continue
+        code = exception.get("violation_code")
+        if code and code not in NON_WAIVABLE:
+            codes.add(code)
+    return codes
 
 
 class EmbeddedPolicyEngine:
