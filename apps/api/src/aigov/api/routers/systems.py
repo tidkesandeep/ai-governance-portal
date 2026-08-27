@@ -25,6 +25,9 @@ from aigov.api.schemas import (
     OversightRequest,
     PolicyDecisionOut,
     RiskAssessmentOut,
+    RuntimeBindingRequest,
+    RuntimeCollectRequest,
+    RuntimeEnforceRequest,
 )
 from aigov.api.serialize import (
     action_authorization_out,
@@ -38,6 +41,7 @@ from aigov.api.serialize import (
     system_out,
 )
 from aigov.application.governance import (
+    AdapterRejectedError,
     CapabilityRejectedError,
     EvidenceRejectedError,
     ExceptionRejectedError,
@@ -129,6 +133,20 @@ def _observation_rejected(exc: ObservationRejectedError) -> HTTPException:
     )
 
 
+def _adapter_rejected(exc: AdapterRejectedError) -> HTTPException:
+    status = 503 if exc.code == "ADAPTER_UNAVAILABLE" else 422
+    return HTTPException(
+        status_code=status,
+        detail={
+            "type": "https://api.aigov.local/problems/adapter",
+            "title": "Execution-plane adapter rejected",
+            "status": status,
+            "code": exc.code,
+            "detail": exc.detail,
+        },
+    )
+
+
 async def _system_360(
     svc: GovernanceService, principal: Principal, system_id: str
 ) -> AISystem360Out:
@@ -151,6 +169,8 @@ async def _system_360(
     reconciliation = await svc.latest_reconciliation(principal, system_id)
     outbox_events = await svc.list_outbox(principal, system_id)
     github_checks = await svc.list_github_checks(principal, system_id)
+    binding = await svc.latest_binding(principal, system_id)
+    adapter_runs = await svc.list_adapter_runs(principal, system_id)
     return system_360(
         system,
         assessment,
@@ -171,6 +191,8 @@ async def _system_360(
         reconciliation,
         outbox_events,
         github_checks,
+        binding,
+        adapter_runs,
     )
 
 
@@ -698,6 +720,81 @@ async def record_github_check(
     except NotFoundError as exc:
         raise _not_found() from exc
     return github_check_out(row)
+
+
+@router.post("/{system_id}/runtime-bindings", response_model=AISystem360Out, status_code=201)
+async def bind_runtime(
+    system_id: str,
+    body: RuntimeBindingRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.bind_runtime(
+            principal,
+            system_id,
+            provider=body.provider,
+            resource_ref=body.resourceRef,
+            service=body.service,
+            region=body.region,
+            account_ref=body.accountRef,
+        )
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except AdapterRejectedError as exc:
+        raise _adapter_rejected(exc) from exc
+
+
+@router.post("/{system_id}/runtime/discover", response_model=AISystem360Out, status_code=201)
+async def discover_runtime(
+    system_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.discover_runtime(principal, system_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except AdapterRejectedError as exc:
+        raise _adapter_rejected(exc) from exc
+
+
+@router.post("/{system_id}/runtime/collect", response_model=AISystem360Out, status_code=201)
+async def collect_runtime(
+    system_id: str,
+    body: RuntimeCollectRequest | None = None,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    payload = body or RuntimeCollectRequest()
+    try:
+        await svc.collect_runtime(principal, system_id, scenario=payload.scenario)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except AdapterRejectedError as exc:
+        raise _adapter_rejected(exc) from exc
+    except ObservationRejectedError as exc:
+        raise _observation_rejected(exc) from exc
+
+
+@router.post("/{system_id}/runtime/enforce", response_model=AISystem360Out, status_code=201)
+async def enforce_runtime(
+    system_id: str,
+    body: RuntimeEnforceRequest | None = None,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    payload = body or RuntimeEnforceRequest()
+    try:
+        await svc.enforce_runtime(principal, system_id, action=payload.action)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except AdapterRejectedError as exc:
+        raise _adapter_rejected(exc) from exc
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
