@@ -1,11 +1,13 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.2.0
+  version: 0.3.0
   description: |
-    Slice 2 contract: AI system registry, deterministic risk assessment,
-    hashed evidence with freshness and version binding, and a fail-closed
-    deployment gate. Unknown or stale evidence cannot satisfy a mandatory control.
+    Slice 3 contract: AI system registry, deterministic risk assessment,
+    hashed evidence with freshness and version binding, immutable governance
+    snapshots, and short-lived HMAC-signed deployment authorization.
+    Unknown or stale evidence cannot satisfy a mandatory control. BLOCK and
+    REVIEW snapshots never mint an authorization.
   license:
     name: Apache-2.0
 servers:
@@ -18,6 +20,7 @@ tags:
   - name: Policy
   - name: Audit
   - name: Evidence
+  - name: Authorization
 security:
   - bearerAuth: []
 paths:
@@ -177,7 +180,7 @@ paths:
               $ref: "#/components/schemas/DeploymentGateRequest"
       responses:
         "200":
-          description: Gate decision (ALLOW, REVIEW, or BLOCK)
+          description: Gate decision (ALLOW, REVIEW, or BLOCK) plus fingerprint; authorizationId only on ALLOW
           content:
             application/json:
               schema:
@@ -245,6 +248,49 @@ paths:
                 $ref: "#/components/schemas/AISystem360"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/authorizations/{authorizationId}/verify:
+    post:
+      tags: [Authorization]
+      summary: Verify a short-lived deployment authorization
+      description: |
+        Returns HTTP 200 with outcome ALLOW or DENY. Expired, revoked, consumed,
+        version-mismatched, or tampered signatures are DENY — never a silent pass.
+      operationId: verifyDeploymentAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/authorizationId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizationVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationVerify"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/authorizations/{authorizationId}/revoke:
+    post:
+      tags: [Authorization]
+      summary: Revoke a deployment authorization immediately
+      operationId: revokeDeploymentAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/authorizationId"
+      responses:
+        "200":
+          description: Authorization is no longer valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentAuthorization"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/ai-systems/{systemId}/versions:
     post:
       tags: [AI Systems]
@@ -270,6 +316,12 @@ components:
   parameters:
     systemId:
       name: systemId
+      in: path
+      required: true
+      schema:
+        type: string
+    authorizationId:
+      name: authorizationId
       in: path
       required: true
       schema:
@@ -571,6 +623,12 @@ components:
           type: string
         inputDigest:
           type: string
+        fingerprint:
+          type: string
+        snapshotId:
+          type: string
+        authorizationId:
+          type: string
         decidedAt:
           type: string
           format: date-time
@@ -602,6 +660,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ControlAssessment"
+        latestSnapshot:
+          $ref: "#/components/schemas/GovernanceSnapshot"
+        latestAuthorization:
+          $ref: "#/components/schemas/DeploymentAuthorization"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -628,6 +690,14 @@ components:
         evidenceStale:
           type: boolean
           default: false
+        cloud:
+          type: string
+          default: local
+        region:
+          type: string
+        audience:
+          type: string
+          default: cicd
     EvidenceAttachRequest:
       type: object
       required: [type, filename, content]
@@ -698,6 +768,103 @@ components:
           type: integer
         sha256:
           type: string
+    GovernanceSnapshot:
+      type: object
+      required:
+        - id
+        - systemId
+        - policyDecisionId
+        - outcome
+        - assetVersionId
+        - fingerprint
+        - snapshot
+        - createdAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        policyDecisionId:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/GateOutcome"
+        assetVersionId:
+          type: string
+        fingerprint:
+          type: string
+        snapshot:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    DeploymentAuthorization:
+      type: object
+      required:
+        - id
+        - systemId
+        - decisionId
+        - assetVersionId
+        - environment
+        - fingerprint
+        - signature
+        - issuedAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        decisionId:
+          type: string
+        assetVersionId:
+          type: string
+        environment:
+          $ref: "#/components/schemas/Environment"
+        cloud:
+          type: string
+        region:
+          type: string
+        audience:
+          type: string
+        nonce:
+          type: string
+        fingerprint:
+          type: string
+        signature:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        consumedAt:
+          type: string
+          format: date-time
+    AuthorizationVerifyRequest:
+      type: object
+      properties:
+        signature:
+          type: string
+        consume:
+          type: boolean
+          default: false
+    AuthorizationVerify:
+      type: object
+      required: [outcome, authorization]
+      properties:
+        outcome:
+          $ref: "#/components/schemas/GateOutcome"
+        reasons:
+          type: array
+          items:
+            type: string
+        authorization:
+          $ref: "#/components/schemas/DeploymentAuthorization"
     AuditEvent:
       type: object
       required:
