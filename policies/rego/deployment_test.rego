@@ -164,3 +164,29 @@ test_open_incident_blocks {
 	}
 	result == "BLOCK"
 }
+
+test_high_drift_blocks_even_when_waived {
+	result := outcome with input as {
+		"asset": {
+			"risk_band": "LOW",
+			"data_classification": "INTERNAL",
+			"autonomy_level": "HUMAN_IN_LOOP",
+			"uses_customer_decision": false,
+		},
+		"approvals": {},
+		"human_oversight": {"controls": []},
+		"risk": {"band": "LOW", "confidence": 0.9},
+		"evidence": {"stale": false},
+		"reconciliation": {
+			"status": "DRIFT",
+			"high_drift": true,
+			"reasons": [{"code": "ASSET_VERSION_MISMATCH", "severity": "HIGH"}],
+		},
+		"exceptions": [{
+			"violation_code": "RUNTIME_DRIFT",
+			"status": "GRANTED",
+			"expired": false,
+		}],
+	}
+	result == "BLOCK"
+}
