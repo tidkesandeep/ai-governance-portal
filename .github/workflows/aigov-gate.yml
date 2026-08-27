@@ -1,0 +1,33 @@
+name: aigov-gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      systemId:
+        description: Control-plane AI system id
+        required: true
+        type: string
+      environment:
+        description: Target environment passed to the deployment gate
+        required: false
+        default: production
+        type: string
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Evaluate deployment gate
+        env:
+          AIGOV_API_URL: ${{ secrets.AIGOV_API_URL }}
+          AIGOV_TOKEN: ${{ secrets.AIGOV_TOKEN }}
+        run: python -m aigov.cli gate "${{ inputs.systemId }}" --environment "${{ inputs.environment }}"
