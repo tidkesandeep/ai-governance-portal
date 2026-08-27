@@ -6,9 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aigov.application.governance import GovernanceService
 from aigov.config import Settings, get_settings
-from aigov.domains.identity.principal import Principal, principal_from_bearer
+from aigov.domains.identity.principal import AuthError, Principal
+from aigov.domains.identity.service import resolve_principal
 from aigov.domains.policy.engine import EmbeddedPolicyEngine, PolicyEngine
 from aigov.infrastructure.db import session_scope
+from aigov.infrastructure.jwks import JwksClient
 from aigov.infrastructure.object_store import LocalObjectStore
 from aigov.infrastructure.opa import OPAPolicyEngine
 
@@ -30,25 +32,31 @@ def policy_engine(settings: Settings = Depends(settings_dep)) -> PolicyEngine:
     return EmbeddedPolicyEngine()
 
 
+def jwks_client(settings: Settings = Depends(settings_dep)) -> JwksClient:
+    return JwksClient(settings)
+
+
 async def current_principal(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     settings: Settings = Depends(settings_dep),
+    keys: JwksClient = Depends(jwks_client),
 ) -> Principal:
     token = creds.credentials if creds else request.headers.get("x-demo-token")
-    principal = principal_from_bearer(token, demo_auth=settings.demo_auth)
-    if principal is None:
+    try:
+        return await resolve_principal(token, settings=settings, jwks_client=keys)
+    except AuthError as exc:
+        status = 503 if exc.code == "AUTH_UNAVAILABLE" else 401
         raise HTTPException(
-            status_code=401,
+            status_code=status,
             detail={
                 "type": "https://api.aigov.local/problems/unauthorized",
-                "title": "Unauthorized",
-                "status": 401,
-                "code": "UNAUTHORIZED",
-                "detail": "Provide Authorization: Bearer demo or Bearer demo-reviewer",
+                "title": "Unauthorized" if status == 401 else "Identity provider unavailable",
+                "status": status,
+                "code": exc.code,
+                "detail": exc.detail,
             },
-        )
-    return principal
+        ) from exc
 
 
 def governance_service(
