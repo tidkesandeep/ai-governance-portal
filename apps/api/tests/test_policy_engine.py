@@ -213,6 +213,41 @@ def test_open_incident_blocks_and_cannot_be_waived() -> None:
     assert any(reason.code == "RUNTIME_INCIDENT" for reason in result.reasons)
 
 
+def test_runtime_drift_blocks_and_cannot_be_waived() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            reconciliation={
+                "status": "DRIFT",
+                "high_drift": True,
+                "reasons": [{"code": "ASSET_VERSION_MISMATCH", "severity": "HIGH"}],
+            },
+            exceptions=[
+                {
+                    "violation_code": "RUNTIME_DRIFT",
+                    "status": "GRANTED",
+                    "expired": False,
+                }
+            ],
+        )
+    )
+    assert result.outcome == "BLOCK"
+    assert any(reason.code == "RUNTIME_DRIFT" for reason in result.reasons)
+
+
+def test_stale_observation_reviews_low_risk() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            reconciliation={
+                "status": "UNKNOWN",
+                "high_drift": False,
+                "reasons": [{"code": "STALE_OBSERVATION", "severity": "MEDIUM"}],
+            }
+        )
+    )
+    assert result.outcome == "REVIEW"
+    assert any(reason.code == "STALE_OBSERVATION" for reason in result.reasons)
+
+
 def test_resolved_incident_does_not_block() -> None:
     result = evaluate_deployment_document(
         _base(incidents=[{"id": "inc_1", "status": "RESOLVED", "severity": "CRITICAL"}])
