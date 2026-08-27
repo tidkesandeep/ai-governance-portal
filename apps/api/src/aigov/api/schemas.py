@@ -95,6 +95,15 @@ class ControlAssessmentOut(BaseModel):
     sha256: str | None = None
 
 
+class PrincipalOut(BaseModel):
+    tenantId: str
+    actorId: str
+    actorType: str
+    roles: list[str] = Field(default_factory=list)
+    displayName: str
+    authMethod: str
+
+
 class HealthStatus(BaseModel):
     status: str
     details: dict[str, Any] = Field(default_factory=dict)
