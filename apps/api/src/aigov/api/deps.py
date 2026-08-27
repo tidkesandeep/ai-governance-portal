@@ -9,9 +9,10 @@ from aigov.config import Settings, get_settings
 from aigov.domains.identity.principal import AuthError, Principal
 from aigov.domains.identity.service import resolve_principal
 from aigov.domains.policy.engine import EmbeddedPolicyEngine, PolicyEngine
+from aigov.infrastructure.adapters import execution_plane_from_settings
 from aigov.infrastructure.db import session_scope
 from aigov.infrastructure.jwks import JwksClient
-from aigov.infrastructure.object_store import LocalObjectStore
+from aigov.infrastructure.object_store import object_store_from_settings
 from aigov.infrastructure.opa import OPAPolicyEngine
 
 _bearer = HTTPBearer(auto_error=False)
@@ -64,5 +65,6 @@ def governance_service(
     engine: PolicyEngine = Depends(policy_engine),
     settings: Settings = Depends(settings_dep),
 ) -> GovernanceService:
-    store = LocalObjectStore(settings.evidence_dir)
-    return GovernanceService(session, engine, store, settings)
+    store = object_store_from_settings(settings)
+    plane = execution_plane_from_settings(settings)
+    return GovernanceService(session, engine, store, settings, execution_plane=plane)
