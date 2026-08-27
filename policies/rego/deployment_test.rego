@@ -48,6 +48,45 @@ test_stale_evidence_reviews {
 	result == "REVIEW"
 }
 
+test_missing_required_evidence_blocks {
+	result := outcome with input as {
+		"asset": {
+			"risk_band": "HIGH",
+			"data_classification": "INTERNAL",
+			"autonomy_level": "HUMAN_IN_LOOP",
+			"uses_customer_decision": false,
+		},
+		"approvals": {"security": true},
+		"human_oversight": {"controls": []},
+		"risk": {"band": "HIGH", "confidence": 0.9},
+		"evidence": {
+			"stale": false,
+			"controls": [{
+				"id": "CTRL-ML-PERF-001",
+				"required": true,
+				"status": "UNKNOWN",
+			}],
+		},
+	}
+	result == "BLOCK"
+}
+
+test_autonomous_without_oversight_blocks {
+	result := outcome with input as {
+		"asset": {
+			"risk_band": "MEDIUM",
+			"data_classification": "INTERNAL",
+			"autonomy_level": "AUTONOMOUS",
+			"uses_customer_decision": false,
+		},
+		"approvals": {},
+		"human_oversight": {"controls": []},
+		"risk": {"band": "MEDIUM", "confidence": 0.9},
+		"evidence": {"stale": false},
+	}
+	result == "BLOCK"
+}
+
 test_autonomous_without_oversight_blocks {
 	result := outcome with input as {
 		"asset": {
