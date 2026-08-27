@@ -28,6 +28,11 @@ def test_fingerprint_is_stable_and_version_sensitive() -> None:
     assert governance_fingerprint(first) == governance_fingerprint(second)
     changed = build_snapshot_parts(**{**PARTS, "asset_version_id": "ver_2"})
     assert governance_fingerprint(changed) != governance_fingerprint(first)
+    with_incident = build_snapshot_parts(
+        **{**PARTS, "incidents": [{"id": "inc_1", "severity": "CRITICAL", "status": "OPEN"}]}
+    )
+    assert "incidentDigest" in first
+    assert governance_fingerprint(with_incident) != governance_fingerprint(first)
 
 
 def test_hmac_round_trip_and_tamper() -> None:
