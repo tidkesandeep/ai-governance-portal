@@ -275,6 +275,75 @@ class IncidentOut(BaseModel):
     resolvedAt: datetime | None = None
 
 
+class CapabilityRequest(BaseModel):
+    action: str = Field(min_length=3, max_length=64)
+    resourcePattern: str = Field(min_length=3, max_length=128)
+    maxAmount: float | None = None
+    requiresApproval: bool = False
+
+
+class CapabilityOut(BaseModel):
+    id: str
+    systemId: str
+    boundVersionId: str
+    action: str
+    resourcePattern: str
+    maxAmount: float | None = None
+    requiresApproval: bool
+    approved: bool
+    declaredBy: str
+    approvedBy: str | None = None
+    declaredAt: datetime
+    approvedAt: datetime | None = None
+    revokedAt: datetime | None = None
+
+
+class ActionAuthorizeRequest(BaseModel):
+    action: str = Field(min_length=3, max_length=64)
+    resource: str = Field(min_length=1, max_length=128)
+    amount: float | None = None
+
+
+class ActionDecisionOut(BaseModel):
+    id: str
+    systemId: str
+    outcome: Literal["ALLOW", "DENY"]
+    action: str
+    resource: str
+    amount: float | None = None
+    capabilityId: str | None = None
+    reasons: list[PolicyReasonOut]
+    requiredActions: list[str]
+    policyBundle: str
+    policyDigest: str | None = None
+    inputDigest: str | None = None
+    fingerprint: str
+    authorizationId: str | None = None
+    decidedAt: datetime
+
+
+class ActionAuthorizationOut(BaseModel):
+    id: str
+    systemId: str
+    decisionId: str
+    assetVersionId: str
+    action: str
+    resource: str
+    nonce: str
+    fingerprint: str
+    signature: str
+    issuedAt: datetime
+    expiresAt: datetime
+    revokedAt: datetime | None = None
+    consumedAt: datetime | None = None
+
+
+class ActionAuthorizationVerifyOut(BaseModel):
+    outcome: Literal["ALLOW", "DENY"]
+    reasons: list[str] = Field(default_factory=list)
+    authorization: ActionAuthorizationOut
+
+
 class ApprovalOut(BaseModel):
     function: str
     approved: bool
@@ -322,6 +391,9 @@ class AISystem360Out(BaseModel):
     findings: list[FindingOut] = Field(default_factory=list)
     incidents: list[IncidentOut] = Field(default_factory=list)
     latestIncident: IncidentOut | None = None
+    capabilities: list[CapabilityOut] = Field(default_factory=list)
+    latestActionDecision: ActionDecisionOut | None = None
+    latestActionAuthorization: ActionAuthorizationOut | None = None
 
 
 class AuditEventOut(BaseModel):
