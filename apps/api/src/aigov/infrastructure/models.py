@@ -124,6 +124,43 @@ class DeploymentAuthorizationModel(Base):
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WorkflowCaseModel(Base):
+    __tablename__ = "workflow_cases"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    decision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    snapshot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    case_type: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32))
+    risk_band: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    reason_codes: Mapped[list] = mapped_column(JSON)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ExceptionModel(Base):
+    __tablename__ = "exceptions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    case_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    violation_code: Mapped[str] = mapped_column(String(64))
+    control_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bound_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    justification: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32))
+    requested_by: Mapped[str] = mapped_column(String(64))
+    granted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class EvidenceArtifactModel(Base):
     __tablename__ = "evidence_artifacts"
 
