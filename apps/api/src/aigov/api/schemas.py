@@ -46,6 +46,9 @@ class OversightRequest(BaseModel):
 class DeploymentGateRequest(BaseModel):
     environment: Environment | None = None
     evidenceStale: bool = False
+    cloud: str = "local"
+    region: str | None = None
+    audience: str = "cicd"
 
 
 EvidenceType = Literal[
@@ -142,6 +145,49 @@ class PolicyDecisionOut(BaseModel):
     policyDigest: str | None = None
     inputDigest: str | None = None
     decidedAt: datetime
+    fingerprint: str | None = None
+    snapshotId: str | None = None
+    authorizationId: str | None = None
+
+
+class GovernanceSnapshotOut(BaseModel):
+    id: str
+    systemId: str
+    policyDecisionId: str
+    outcome: str
+    assetVersionId: str
+    fingerprint: str
+    snapshot: dict[str, Any]
+    createdAt: datetime
+
+
+class DeploymentAuthorizationOut(BaseModel):
+    id: str
+    systemId: str
+    decisionId: str
+    assetVersionId: str
+    environment: str
+    cloud: str
+    region: str | None = None
+    audience: str
+    nonce: str
+    fingerprint: str
+    signature: str
+    issuedAt: datetime
+    expiresAt: datetime
+    revokedAt: datetime | None = None
+    consumedAt: datetime | None = None
+
+
+class AuthorizationVerifyRequest(BaseModel):
+    signature: str | None = None
+    consume: bool = False
+
+
+class AuthorizationVerifyOut(BaseModel):
+    outcome: Literal["ALLOW", "DENY"]
+    reasons: list[str] = Field(default_factory=list)
+    authorization: DeploymentAuthorizationOut
 
 
 class ApprovalOut(BaseModel):
@@ -183,6 +229,8 @@ class AISystem360Out(BaseModel):
     humanOversight: list[str] = Field(default_factory=list)
     evidence: list[EvidenceArtifactOut] = Field(default_factory=list)
     controls: list[ControlAssessmentOut] = Field(default_factory=list)
+    latestSnapshot: GovernanceSnapshotOut | None = None
+    latestAuthorization: DeploymentAuthorizationOut | None = None
 
 
 class AuditEventOut(BaseModel):
