@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_token: str | None = None
     api_url: str = "http://localhost:8000"
+    cloud_adapter_mode: str = "fake"
+    object_store: str = "local"
+    object_store_bucket: str = "aigov-evidence"
 
     @property
     def cors_origin_list(self) -> list[str]:
