@@ -90,5 +90,19 @@ export const api = {
     request<AISystem360>(`/v1/ai-systems/${id}/exceptions/${exceptionId}/deny`, { method: "POST" }),
   revokeException: (id: string, exceptionId: string) =>
     request<AISystem360>(`/v1/ai-systems/${id}/exceptions/${exceptionId}/revoke`, { method: "POST" }),
+  recordFinding: (
+    id: string,
+    body: { findingType: string; severity: string; summary: string; detector?: string },
+  ) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/findings`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  promoteFinding: (id: string, findingId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/findings/${findingId}/promote`, { method: "POST" }),
+  dismissFinding: (id: string, findingId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/findings/${findingId}/dismiss`, { method: "POST" }),
+  resolveIncident: (id: string, incidentId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/incidents/${incidentId}/resolve`, { method: "POST" }),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
