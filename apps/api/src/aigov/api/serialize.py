@@ -9,7 +9,9 @@ from aigov.api.schemas import (
     DeploymentAuthorizationOut,
     EvidenceArtifactOut,
     ExceptionOut,
+    FindingOut,
     GovernanceSnapshotOut,
+    IncidentOut,
     PolicyDecisionOut,
     PolicyReasonOut,
     RiskAssessmentOut,
@@ -27,7 +29,9 @@ from aigov.infrastructure.models import (
     DeploymentAuthorizationModel,
     EvidenceArtifactModel,
     ExceptionModel,
+    FindingModel,
     GovernanceDecisionModel,
+    IncidentModel,
     PolicyDecisionModel,
     RiskAssessmentModel,
     WorkflowCaseModel,
@@ -223,6 +227,39 @@ def exception_out(row: ExceptionModel) -> ExceptionOut:
     )
 
 
+def finding_out(row: FindingModel) -> FindingOut:
+    return FindingOut(
+        id=row.id,
+        systemId=row.system_id,
+        incidentId=row.incident_id,
+        boundVersionId=row.bound_version_id,
+        findingType=row.finding_type,
+        severity=row.severity,
+        summary=row.summary,
+        detector=row.detector,
+        status=row.status,
+        recordedBy=row.recorded_by,
+        recordedAt=row.recorded_at,
+        resolvedAt=row.resolved_at,
+        dismissedAt=row.dismissed_at,
+    )
+
+
+def incident_out(row: IncidentModel) -> IncidentOut:
+    return IncidentOut(
+        id=row.id,
+        systemId=row.system_id,
+        severity=row.severity,
+        status=row.status,
+        title=row.title,
+        summary=row.summary,
+        openedBy=row.opened_by,
+        resolvedBy=row.resolved_by,
+        openedAt=row.opened_at,
+        resolvedAt=row.resolved_at,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
@@ -234,8 +271,15 @@ def system_360(
     authorization: DeploymentAuthorizationModel | None = None,
     cases: list[WorkflowCaseModel] | None = None,
     exceptions: list[ExceptionModel] | None = None,
+    findings: list[FindingModel] | None = None,
+    incidents: list[IncidentModel] | None = None,
 ) -> AISystem360Out:
     case_items = [case_out(row) for row in cases or []]
+    incident_items = [incident_out(row) for row in incidents or []]
+    latest_incident = next(
+        (item for item in incident_items if item.status == "OPEN"),
+        incident_items[0] if incident_items else None,
+    )
     return AISystem360Out(
         system=system_out(system, assessment.risk_band if assessment else None),
         registration=system.registration,
@@ -263,4 +307,7 @@ def system_360(
         latestCase=case_items[0] if case_items else None,
         cases=case_items,
         exceptions=[exception_out(row) for row in exceptions or []],
+        findings=[finding_out(row) for row in findings or []],
+        incidents=incident_items,
+        latestIncident=latest_incident,
     )
