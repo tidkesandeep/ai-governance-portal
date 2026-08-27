@@ -48,6 +48,50 @@ class DeploymentGateRequest(BaseModel):
     evidenceStale: bool = False
 
 
+EvidenceType = Literal[
+    "MODEL_CARD",
+    "EVALUATION_RUN",
+    "FAIRNESS_EVALUATION",
+    "SECURITY_SCAN",
+    "SBOM",
+]
+
+
+class EvidenceAttachRequest(BaseModel):
+    type: EvidenceType
+    filename: str = Field(min_length=1, max_length=255)
+    content: str = Field(min_length=1)
+    collectedAt: datetime | None = None
+    boundVersionId: str | None = None
+    mediaType: str = "text/plain"
+
+
+class EvidenceArtifactOut(BaseModel):
+    id: str
+    systemId: str
+    boundVersionId: str
+    type: str
+    filename: str
+    uri: str
+    sha256: str
+    bytesSize: int
+    collectorVersion: str
+    verificationStatus: str
+    collectedAt: datetime
+    createdAt: datetime
+
+
+class ControlAssessmentOut(BaseModel):
+    controlId: str
+    evidenceType: str
+    required: bool
+    status: str
+    evidenceId: str | None = None
+    reason: str
+    maxAgeDays: int
+    sha256: str | None = None
+
+
 class HealthStatus(BaseModel):
     status: str
     details: dict[str, Any] = Field(default_factory=dict)
@@ -121,6 +165,7 @@ class AISystemOut(BaseModel):
     autonomyLevel: str
     status: str
     riskBand: str | None = None
+    currentVersionId: str
     createdAt: datetime
     updatedAt: datetime | None = None
 
@@ -136,6 +181,8 @@ class AISystem360Out(BaseModel):
     latestDecision: PolicyDecisionOut | None = None
     approvals: list[ApprovalOut] = Field(default_factory=list)
     humanOversight: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceArtifactOut] = Field(default_factory=list)
+    controls: list[ControlAssessmentOut] = Field(default_factory=list)
 
 
 class AuditEventOut(BaseModel):
