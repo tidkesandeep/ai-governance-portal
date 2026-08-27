@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from aigov.api.routers import health, systems
+from aigov.api.routers import health, identity, systems
 from aigov.config import get_settings
 from aigov.infrastructure.db import create_schema, dispose_engine, init_engine
 
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="AI Governance Control Plane API",
-        version="0.7.0",
+        version="0.8.0",
         lifespan=lifespan,
     )
     app.add_middleware(
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router)
+    app.include_router(identity.router)
     app.include_router(systems.router)
 
     @app.exception_handler(HTTPException)
