@@ -19,6 +19,7 @@ from aigov.api.schemas import (
     EvidenceAttachRequest,
     ExceptionRequest,
     FindingRequest,
+    ObservationRequest,
     OversightRequest,
     PolicyDecisionOut,
     RiskAssessmentOut,
@@ -40,6 +41,7 @@ from aigov.application.governance import (
     FindingRejectedError,
     GovernanceService,
     NotFoundError,
+    ObservationRejectedError,
     SegregationOfDutiesError,
 )
 from aigov.domains.identity.principal import Principal
@@ -111,6 +113,19 @@ def _capability_rejected(exc: CapabilityRejectedError) -> HTTPException:
     )
 
 
+def _observation_rejected(exc: ObservationRejectedError) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "type": "https://api.aigov.local/problems/observation-rejected",
+            "title": "Observation rejected",
+            "status": 422,
+            "code": exc.code,
+            "detail": exc.detail,
+        },
+    )
+
+
 async def _system_360(
     svc: GovernanceService, principal: Principal, system_id: str
 ) -> AISystem360Out:
@@ -129,6 +144,8 @@ async def _system_360(
     capabilities = await svc.list_capabilities(principal, system_id)
     action_decision = await svc.latest_action_decision(principal, system_id)
     action_authorization = await svc.latest_action_authorization(principal, system_id)
+    observation = await svc.latest_observation(principal, system_id)
+    reconciliation = await svc.latest_reconciliation(principal, system_id)
     return system_360(
         system,
         assessment,
@@ -145,6 +162,8 @@ async def _system_360(
         capabilities,
         action_decision,
         action_authorization,
+        observation,
+        reconciliation,
     )
 
 
@@ -627,6 +646,32 @@ async def revoke_action_authorization(
     except NotFoundError as exc:
         raise _not_found() from exc
     return action_authorization_out(row)
+
+
+@router.post("/{system_id}/observations", response_model=AISystem360Out, status_code=201)
+async def record_observation(
+    system_id: str,
+    body: ObservationRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.record_observation(
+            principal,
+            system_id,
+            running=body.running,
+            asset_version_id=body.assetVersionId,
+            environment=body.environment,
+            cloud=body.cloud,
+            region=body.region,
+            fingerprint=body.fingerprint,
+            observed_at=body.observedAt,
+        )
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except ObservationRejectedError as exc:
+        raise _observation_rejected(exc) from exc
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
