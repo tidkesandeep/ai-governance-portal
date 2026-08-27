@@ -18,6 +18,7 @@ const NON_WAIVABLE = new Set([
   "MISSING_ASSESSMENT",
   "POLICY_ENGINE_UNAVAILABLE",
   "RUNTIME_INCIDENT",
+  "RUNTIME_DRIFT",
 ]);
 
 const SAMPLES: Record<string, { filename: string; content: string }> = {
@@ -626,6 +627,95 @@ export default function System360Page() {
               ))
             )}
           </ul>
+        </div>
+      </section>
+
+      <section className="border border-rule bg-panel p-5">
+        <h2 className="font-serif text-2xl">Desired vs observed</h2>
+        <p className="mt-1 text-sm text-navy/60">
+          A gate ALLOW authorizes a version. It does not prove that version is what is running.
+          HIGH drift revokes live tokens and blocks the gate with a non-waivable{" "}
+          <span className="font-mono">RUNTIME_DRIFT</span>. A later matching observation does not
+          mint a new token.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() => run("obs-sync", () => api.recordObservation(id, {}))}
+          >
+            Report in-sync
+          </button>
+          <button
+            className="border border-carmine/40 px-3 py-1 font-mono text-[11px] uppercase text-carmine"
+            disabled={busy !== null}
+            onClick={() =>
+              run("obs-drift", () => api.recordObservation(id, { assetVersionId: "ver_not_authorized" }))
+            }
+          >
+            Report drifted version
+          </button>
+          <button
+            className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() =>
+              run("obs-stale", () =>
+                api.recordObservation(id, {
+                  observedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+                }),
+              )
+            }
+          >
+            Report stale observation
+          </button>
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="border border-rule px-3 py-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-navy/50">Observation</p>
+            {data.latestObservation ? (
+              <>
+                <p className="mt-2 font-mono text-xs">
+                  {data.latestObservation.running ? "RUNNING" : "STOPPED"} · {data.latestObservation.environment}
+                </p>
+                <p className="font-mono text-[11px] text-navy/50">
+                  version {data.latestObservation.boundVersionId}
+                </p>
+                <p className="break-all font-mono text-[11px] text-navy/50">
+                  {data.latestObservation.fingerprint ?? "no fingerprint"}
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-navy/60">No runtime observation recorded.</p>
+            )}
+          </div>
+          <div className="border border-rule px-3 py-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-navy/50">Reconciliation</p>
+            {data.latestReconciliation ? (
+              <>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <p className="font-mono text-xs">{data.latestReconciliation.status}</p>
+                  <span
+                    className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(data.latestReconciliation.status)}`}
+                  >
+                    {data.latestReconciliation.status}
+                  </span>
+                </div>
+                {(data.latestReconciliation.reasons ?? []).length === 0 ? (
+                  <p className="mt-1 text-sm text-navy/60">No drift reasons.</p>
+                ) : (
+                  <ul className="mt-1 space-y-1">
+                    {data.latestReconciliation.reasons.map((reason) => (
+                      <li key={reason.code} className="font-mono text-[11px] text-navy/70">
+                        {reason.severity} · {reason.code}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-navy/60">No reconciliation computed yet.</p>
+            )}
+          </div>
         </div>
       </section>
 
