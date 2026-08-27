@@ -8,6 +8,7 @@ import type {
   AuthorizationVerify,
   DeploymentAuthorization,
   PolicyDecision,
+  Principal,
   Registration,
   RiskAssessment,
 } from "./types";
@@ -40,6 +41,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  me: () => request<Principal>("/v1/me"),
   list: () => request<{ items: AISystem360["system"][] }>("/v1/ai-systems"),
   get: (id: string) => request<AISystem360>(`/v1/ai-systems/${id}`),
   register: (body: Registration) =>
