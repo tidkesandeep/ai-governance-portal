@@ -1,12 +1,13 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.4.0
+  version: 0.5.0
   description: |
-    Slice 4 contract: AI system registry, deterministic risk, hashed evidence,
+    Slice 5 contract: AI system registry, deterministic risk, hashed evidence,
     fail-closed deployment gate, immutable snapshots, short-lived authorization,
-    workflow cases with SLA clocks, and time-bounded exceptions. Expired or
-    version-unbound exceptions cannot satisfy a mandatory control.
+    workflow cases with SLA clocks, time-bounded exceptions, findings, incidents,
+    and runtime revocation. An open incident is a non-waivable RUNTIME_INCIDENT
+    and immediately invalidates live deployment authorization.
   license:
     name: Apache-2.0
 servers:
@@ -21,6 +22,7 @@ tags:
   - name: Evidence
   - name: Authorization
   - name: Workflow
+  - name: Findings
 security:
   - bearerAuth: []
 paths:
@@ -374,6 +376,101 @@ paths:
                 $ref: "#/components/schemas/AISystem360"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/findings:
+    post:
+      tags: [Findings]
+      summary: Record a version-bound finding; HIGH and CRITICAL auto-promote to an incident
+      operationId: recordFinding
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingRequest"
+      responses:
+        "201":
+          description: Finding recorded; HIGH/CRITICAL also open an incident and revoke authorization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/findings/{findingId}/promote:
+    post:
+      tags: [Findings]
+      summary: Promote an open finding to an incident and revoke live authorization
+      operationId: promoteFinding
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/findingId"
+      responses:
+        "200":
+          description: Finding promoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/findings/{findingId}/dismiss:
+    post:
+      tags: [Findings]
+      summary: Dismiss an open finding without opening an incident
+      operationId: dismissFinding
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/findingId"
+      responses:
+        "200":
+          description: Finding dismissed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/incidents/{incidentId}/resolve:
+    post:
+      tags: [Findings]
+      summary: Resolve an open incident; does not mint a new authorization
+      operationId: resolveIncident
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/incidentId"
+      responses:
+        "200":
+          description: Incident resolved; re-evaluate the gate to authorize
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/ai-systems/{systemId}/versions:
     post:
       tags: [AI Systems]
@@ -411,6 +508,18 @@ components:
         type: string
     exceptionId:
       name: exceptionId
+      in: path
+      required: true
+      schema:
+        type: string
+    findingId:
+      name: findingId
+      in: path
+      required: true
+      schema:
+        type: string
+    incidentId:
+      name: incidentId
       in: path
       required: true
       schema:
@@ -763,6 +872,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ExceptionRecord"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FindingRecord"
+        incidents:
+          type: array
+          items:
+            $ref: "#/components/schemas/IncidentRecord"
+        latestIncident:
+          $ref: "#/components/schemas/IncidentRecord"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -1048,6 +1167,98 @@ components:
           type: string
           format: date-time
         revokedAt:
+          type: string
+          format: date-time
+    FindingRequest:
+      type: object
+      required: [findingType, severity, summary]
+      properties:
+        findingType:
+          type: string
+          enum:
+            - EVAL_REGRESSION
+            - FAIRNESS_DRIFT
+            - SECURITY_SIGNAL
+            - DATA_DRIFT
+            - POLICY_VIOLATION
+            - HUMAN_REPORT
+        severity:
+          $ref: "#/components/schemas/RiskBand"
+        summary:
+          type: string
+          minLength: 8
+        detector:
+          type: string
+          default: HUMAN
+    FindingRecord:
+      type: object
+      required:
+        - id
+        - systemId
+        - boundVersionId
+        - findingType
+        - severity
+        - summary
+        - detector
+        - status
+        - recordedBy
+        - recordedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        incidentId:
+          type: string
+        boundVersionId:
+          type: string
+        findingType:
+          type: string
+        severity:
+          $ref: "#/components/schemas/RiskBand"
+        summary:
+          type: string
+        detector:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, PROMOTED, RESOLVED, DISMISSED]
+        recordedBy:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        dismissedAt:
+          type: string
+          format: date-time
+    IncidentRecord:
+      type: object
+      required: [id, systemId, severity, status, title, summary, openedBy, openedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        severity:
+          $ref: "#/components/schemas/RiskBand"
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+        title:
+          type: string
+        summary:
+          type: string
+        openedBy:
+          type: string
+        resolvedBy:
+          type: string
+        openedAt:
+          type: string
+          format: date-time
+        resolvedAt:
           type: string
           format: date-time
     AuditEvent:
