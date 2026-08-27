@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     authorization_ttl_seconds: int = 900
     action_authorization_ttl_seconds: int = 60
     observation_max_age_seconds: int = 900
+    oidc_issuer: str | None = None
+    oidc_audience: str = "aigov-api"
+    oidc_jwks_url: str | None = None
+    oidc_jwks_json: str | None = None
+    oidc_tenant_claim: str = "tid"
+    oidc_roles_claim: str = "roles"
+    oidc_jwks_cache_seconds: int = 300
 
     @property
     def cors_origin_list(self) -> list[str]:
