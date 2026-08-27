@@ -177,7 +177,7 @@ def reconcile(
             {
                 "code": "FINGERPRINT_MISMATCH",
                 "severity": "HIGH",
-                "message": "observed fingerprint does not match the authorized governance fingerprint",
+                "message": "observed fingerprint does not match the authorized fingerprint",
             }
         )
     return ReconciliationOutcome(
