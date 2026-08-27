@@ -101,6 +101,8 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     codes = {reason["code"] for reason in decision["reasons"]}
     assert "MISSING_PRIVACY_APPROVAL" in codes
     assert decision["inputDigest"].startswith("sha256:")
+    assert decision["fingerprint"].startswith("sha256:")
+    assert decision.get("authorizationId") is None
 
     sod = client.post(
         f"/v1/ai-systems/{system_id}/approvals",
@@ -125,6 +127,7 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     )
     assert still_blocked.status_code == 200
     assert still_blocked.json()["outcome"] == "BLOCK"
+    assert still_blocked.json().get("authorizationId") is None
     assert "MISSING_REQUIRED_EVIDENCE" in {
         reason["code"] for reason in still_blocked.json()["reasons"]
     }
@@ -138,6 +141,12 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     )
     assert allowed.status_code == 200
     assert allowed.json()["outcome"] == "ALLOW"
+    assert allowed.json()["fingerprint"].startswith("sha256:")
+    assert allowed.json()["snapshotId"]
+    assert allowed.json()["authorizationId"]
+    view = client.get(f"/v1/ai-systems/{system_id}", headers=auth("demo"))
+    assert view.json()["latestSnapshot"]["fingerprint"] == allowed.json()["fingerprint"]
+    assert view.json()["latestAuthorization"]["id"] == allowed.json()["authorizationId"]
 
     events = client.get(f"/v1/ai-systems/{system_id}/audit-events", headers=auth("demo"))
     assert events.status_code == 200
@@ -145,6 +154,7 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     assert types[0] == "AISystemRegistered"
     assert "RiskAssessmentCompleted" in types
     assert "DeploymentGateEvaluated" in types
+    assert "DeploymentAuthorizationIssued" in types
     hashes = [item["hash"] for item in events.json()["items"]]
     assert all(item.startswith("sha256:") for item in hashes)
     # hash chain: each event commits to the previous hash
@@ -240,6 +250,116 @@ def test_eicar_upload_is_rejected(client: TestClient) -> None:
     )
     assert response.status_code == 422
     assert response.json()["code"] == "EVIDENCE_REJECTED"
+
+
+def allow_fraud(client: TestClient) -> tuple[str, dict]:
+    created = client.post("/v1/ai-systems", json=FRAUD, headers=auth("demo"))
+    system_id = created.json()["system"]["id"]
+    client.post(f"/v1/ai-systems/{system_id}/assessments", headers=auth("demo"))
+    for function in ("privacy", "security", "risk"):
+        client.post(
+            f"/v1/ai-systems/{system_id}/approvals",
+            json={"function": function, "approved": True},
+            headers=auth("demo-reviewer"),
+        )
+    attach_required_evidence(client, system_id)
+    allowed = client.post(
+        f"/v1/ai-systems/{system_id}/deployments/gate",
+        json={},
+        headers=auth("demo"),
+    )
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["outcome"] == "ALLOW"
+    return system_id, allowed.json()
+
+
+def test_authorization_verify_revoke_and_consume(client: TestClient) -> None:
+    system_id, decision = allow_fraud(client)
+    auth_id = decision["authorizationId"]
+    verified = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/verify",
+        json={},
+        headers=auth("demo"),
+    )
+    assert verified.status_code == 200
+    assert verified.json()["outcome"] == "ALLOW"
+    assert verified.json()["reasons"] == []
+
+    tampered = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/verify",
+        json={"signature": "hmac-sha256:" + ("ab" * 32)},
+        headers=auth("demo"),
+    )
+    assert tampered.status_code == 200
+    assert tampered.json()["outcome"] == "DENY"
+    assert "INVALID_SIGNATURE" in tampered.json()["reasons"]
+
+    consumed = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/verify",
+        json={"consume": True},
+        headers=auth("demo"),
+    )
+    assert consumed.json()["outcome"] == "ALLOW"
+    reused = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/verify",
+        json={},
+        headers=auth("demo"),
+    )
+    assert reused.json()["outcome"] == "DENY"
+    assert "CONSUMED" in reused.json()["reasons"]
+
+    system_id, decision = allow_fraud(client)
+    auth_id = decision["authorizationId"]
+    revoked = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/revoke",
+        headers=auth("demo"),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["revokedAt"]
+    denied = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/verify",
+        json={},
+        headers=auth("demo"),
+    )
+    assert denied.json()["outcome"] == "DENY"
+    assert "REVOKED" in denied.json()["reasons"]
+
+
+def test_version_cut_revokes_authorization(client: TestClient) -> None:
+    system_id, decision = allow_fraud(client)
+    auth_id = decision["authorizationId"]
+    cut = client.post(f"/v1/ai-systems/{system_id}/versions", headers=auth("demo"))
+    assert cut.status_code == 201
+    assert cut.json()["latestAuthorization"]["revokedAt"]
+    denied = client.post(
+        f"/v1/ai-systems/{system_id}/authorizations/{auth_id}/verify",
+        json={},
+        headers=auth("demo"),
+    )
+    assert denied.json()["outcome"] == "DENY"
+    reasons = set(denied.json()["reasons"])
+    assert "REVOKED" in reasons
+    assert "ASSET_VERSION_MISMATCH" in reasons
+
+
+def test_zero_ttl_authorization_expires_immediately(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AIGOV_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/ttl.db")
+    monkeypatch.setenv("AIGOV_OPA_URL", "")
+    monkeypatch.setenv("AIGOV_DEMO_AUTH", "true")
+    monkeypatch.setenv("AIGOV_EVIDENCE_DIR", str(tmp_path / "evidence"))
+    monkeypatch.setenv("AIGOV_AUTHORIZATION_TTL_SECONDS", "0")
+    get_settings.cache_clear()
+    application = create_app()
+    with TestClient(application) as test_client:
+        system_id, decision = allow_fraud(test_client)
+        denied = test_client.post(
+            f"/v1/ai-systems/{system_id}/authorizations/{decision['authorizationId']}/verify",
+            json={},
+            headers=auth("demo"),
+        )
+        assert denied.json()["outcome"] == "DENY"
+        assert "EXPIRED" in denied.json()["reasons"]
+    get_settings.cache_clear()
 
 
 def test_unauthorized(client: TestClient) -> None:
