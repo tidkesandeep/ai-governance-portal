@@ -7,6 +7,7 @@ import type {
   AuditEvent,
   AuthorizationVerify,
   DeploymentAuthorization,
+  GitHubCheck,
   PolicyDecision,
   Principal,
   Registration,
@@ -141,6 +142,13 @@ export const api = {
     },
   ) =>
     request<AISystem360>(`/v1/ai-systems/${id}/observations`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  publishOutbox: (limit = 100) =>
+    request<{ published: number }>(`/v1/outbox/publish?limit=${limit}`, { method: "POST" }),
+  recordGithubCheck: (id: string, body: { sha: string; repo?: string }) =>
+    request<GitHubCheck>(`/v1/ai-systems/${id}/github-checks`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
