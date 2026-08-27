@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-POLICY_BUNDLE = "payments-baseline@0.1.0"
-POLICY_DIGEST = "sha256:slice1-payments-baseline-0.1.0"
+POLICY_BUNDLE = "payments-baseline@0.2.0"
+POLICY_DIGEST = "sha256:slice2-payments-baseline-0.2.0"
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,8 @@ ACTIONS = {
     "STALE_EVIDENCE": "refresh evaluation evidence",
     "LOW_CONFIDENCE": "supply missing risk attributes and reassess",
     "MISSING_ASSESSMENT": "run risk assessment",
+    "MISSING_REQUIRED_EVIDENCE": "attach required evidence for the current asset version",
+    "EVIDENCE_HASH_FAILURE": "re-upload evidence; stored digest does not match bytes",
 }
 
 
@@ -39,7 +41,7 @@ class PolicyEngine(Protocol):
 
 
 def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
-    """Embedded Slice-1 evaluator. Must stay aligned with policies/rego/deployment.rego."""
+    """Embedded evaluator. Must stay aligned with policies/rego/deployment.rego."""
     reasons: list[PolicyReason] = []
     asset = document.get("asset") or {}
     approvals = document.get("approvals") or {}
@@ -95,10 +97,42 @@ def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
         reasons.append(
             PolicyReason(
                 "STALE_EVIDENCE",
-                "MEDIUM",
+                "HIGH" if high_risk else "MEDIUM",
                 "evidence is stale relative to the control freshness policy",
             )
         )
+    for control in evidence.get("controls") or []:
+        status = control.get("status")
+        required = control.get("required", True)
+        if not required:
+            continue
+        if status == "UNKNOWN":
+            reasons.append(
+                PolicyReason(
+                    "MISSING_REQUIRED_EVIDENCE",
+                    "HIGH",
+                    "unknown evidence cannot satisfy a mandatory control",
+                )
+            )
+            break
+        if status == "FAIL":
+            reasons.append(
+                PolicyReason(
+                    "EVIDENCE_HASH_FAILURE",
+                    "HIGH",
+                    "evidence hash verification failed",
+                )
+            )
+            break
+        if status == "STALE" and high_risk:
+            if not any(reason.code == "STALE_EVIDENCE" for reason in reasons):
+                reasons.append(
+                    PolicyReason(
+                        "STALE_EVIDENCE",
+                        "HIGH",
+                        "stale evidence cannot satisfy a HIGH or CRITICAL control",
+                    )
+                )
     confidence = risk.get("confidence")
     if confidence is not None and confidence < 0.7:
         reasons.append(
