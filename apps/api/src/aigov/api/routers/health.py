@@ -17,9 +17,22 @@ def _auth_status() -> str:
 
 @router.get("/health", response_model=HealthStatus)
 async def health() -> HealthStatus:
-    return HealthStatus(status="ok", details={"auth": _auth_status()})
+    return HealthStatus(
+        status="ok",
+        details={
+            "auth": _auth_status(),
+            "adapters": get_settings().cloud_adapter_mode,
+        },
+    )
 
 
 @router.get("/ready", response_model=HealthStatus)
 async def ready() -> HealthStatus:
-    return HealthStatus(status="ok", details={"database": "ok", "auth": _auth_status()})
+    return HealthStatus(
+        status="ok",
+        details={
+            "database": "ok",
+            "auth": _auth_status(),
+            "adapters": get_settings().cloud_adapter_mode,
+        },
+    )
