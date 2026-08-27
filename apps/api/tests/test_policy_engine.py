@@ -194,3 +194,27 @@ def test_hash_failure_cannot_be_waived() -> None:
     )
     assert result.outcome == "BLOCK"
     assert any(reason.code == "EVIDENCE_HASH_FAILURE" for reason in result.reasons)
+
+
+def test_open_incident_blocks_and_cannot_be_waived() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            incidents=[{"id": "inc_1", "status": "OPEN", "severity": "CRITICAL"}],
+            exceptions=[
+                {
+                    "violation_code": "RUNTIME_INCIDENT",
+                    "status": "GRANTED",
+                    "expired": False,
+                }
+            ],
+        )
+    )
+    assert result.outcome == "BLOCK"
+    assert any(reason.code == "RUNTIME_INCIDENT" for reason in result.reasons)
+
+
+def test_resolved_incident_does_not_block() -> None:
+    result = evaluate_deployment_document(
+        _base(incidents=[{"id": "inc_1", "status": "RESOLVED", "severity": "CRITICAL"}])
+    )
+    assert result.outcome == "ALLOW"
