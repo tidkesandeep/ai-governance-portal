@@ -1782,7 +1782,8 @@ class GovernanceService:
             )
             return open_case
         open_case.case_type = "RECONCILIATION"
-        open_case.reason_codes = list(dict.fromkeys([*(open_case.reason_codes or []), *reason_codes]))
+        merged = [*(open_case.reason_codes or []), *reason_codes]
+        open_case.reason_codes = list(dict.fromkeys(merged))
         if risk_band:
             open_case.risk_band = risk_band
         await self.audit.append(
