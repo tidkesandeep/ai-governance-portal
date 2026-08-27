@@ -4,7 +4,14 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { bandClass, outcomeClass } from "@/lib/style";
-import type { AISystem360, AuditEvent, AuthorizationVerify, PolicyDecision } from "@/lib/types";
+import type {
+  ActionAuthorizationVerify,
+  ActionDecision,
+  AISystem360,
+  AuditEvent,
+  AuthorizationVerify,
+  PolicyDecision,
+} from "@/lib/types";
 
 const NON_WAIVABLE = new Set([
   "EVIDENCE_HASH_FAILURE",
@@ -37,6 +44,8 @@ export default function System360Page() {
   const [busy, setBusy] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
   const [verification, setVerification] = useState<AuthorizationVerify | null>(null);
+  const [actionDecision, setActionDecision] = useState<ActionDecision | null>(null);
+  const [actionVerification, setActionVerification] = useState<ActionAuthorizationVerify | null>(null);
 
   const refresh = useCallback(async () => {
     const [payload, events] = await Promise.all([api.get(id), api.audit(id)]);
@@ -617,6 +626,194 @@ export default function System360Page() {
               ))
             )}
           </ul>
+        </div>
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Capabilities</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            Agents may only act through version-bound capabilities. Privileged payments actions
+            always require a reviewer approval. The engineer cannot approve their own declaration.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() =>
+                run("cap-refund", () =>
+                  api.declareCapability(id, {
+                    action: "payments.refund",
+                    resourcePattern: "account:retail-*",
+                    maxAmount: 500,
+                    requiresApproval: true,
+                  }),
+                )
+              }
+            >
+              Declare retail refund ≤ 500
+            </button>
+            <button
+              className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() =>
+                run("cap-crm", () =>
+                  api.declareCapability(id, {
+                    action: "crm.read",
+                    resourcePattern: "customer:*",
+                  }),
+                )
+              }
+            >
+              Declare CRM read
+            </button>
+          </div>
+          <ul className="mt-4 space-y-2">
+            {(data.capabilities ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No capabilities declared.</li>
+            ) : (
+              data.capabilities.map((item) => (
+                <li key={item.id} className="border border-rule px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs">{item.action}</p>
+                    <span
+                      className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(item.approved ? "APPROVED" : "REQUESTED")}`}
+                    >
+                      {item.approved ? "APPROVED" : "PENDING"}
+                    </span>
+                  </div>
+                  <p className="font-mono text-[11px] text-navy/50">
+                    {item.resourcePattern}
+                    {item.maxAmount != null ? ` · max ${item.maxAmount}` : ""}
+                  </p>
+                  {item.requiresApproval && !item.approved ? (
+                    <button
+                      className="mt-2 border border-ink px-2 py-1 font-mono text-[11px] uppercase"
+                      disabled={busy !== null}
+                      onClick={() => run(`approve-cap-${item.id}`, () => api.approveCapability(id, item.id))}
+                    >
+                      Approve
+                    </button>
+                  ) : null}
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Action authorization</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            Real-time ALLOW or DENY. Undeclared tools, out-of-pattern resources, amount ceilings,
+            missing approvals, and open incidents all fail closed.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() =>
+                run("act-retail", async () => {
+                  const result = await api.authorizeAction(id, {
+                    action: "payments.refund",
+                    resource: "account:retail-123",
+                    amount: 50,
+                  });
+                  setActionDecision(result);
+                  setActionVerification(null);
+                })
+              }
+            >
+              Authorize retail refund $50
+            </button>
+            <button
+              className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() =>
+                run("act-wholesale", async () => {
+                  const result = await api.authorizeAction(id, {
+                    action: "payments.refund",
+                    resource: "account:wholesale-1",
+                    amount: 50,
+                  });
+                  setActionDecision(result);
+                  setActionVerification(null);
+                })
+              }
+            >
+              Authorize wholesale refund
+            </button>
+            <button
+              className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() =>
+                run("act-undeclared", async () => {
+                  const result = await api.authorizeAction(id, {
+                    action: "ledger.write",
+                    resource: "ledger:core",
+                  });
+                  setActionDecision(result);
+                  setActionVerification(null);
+                })
+              }
+            >
+              Authorize undeclared ledger.write
+            </button>
+          </div>
+          {(() => {
+            const latest = actionDecision ?? data.latestActionDecision;
+            const token = data.latestActionAuthorization;
+            return (
+              <div className="mt-4 space-y-3">
+                {latest ? (
+                  <div className="border border-rule px-3 py-2">
+                    <p className={`inline-block px-2 py-0.5 font-mono text-xs ${outcomeClass(latest.outcome)}`}>
+                      {latest.outcome}
+                    </p>
+                    <p className="mt-2 font-mono text-[11px] text-navy/70">
+                      {latest.action} · {latest.resource}
+                      {latest.amount != null ? ` · ${latest.amount}` : ""}
+                    </p>
+                    {latest.reasons.length > 0 ? (
+                      <p className="mt-1 font-mono text-[11px] text-carmine">
+                        {latest.reasons.map((reason) => reason.code).join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-sm text-navy/60">No action decision yet.</p>
+                )}
+                {token ? (
+                  <div>
+                    <span
+                      className={`border px-2 py-1 font-mono text-xs ${outcomeClass(token.revokedAt ? "DENY" : "ALLOW")}`}
+                    >
+                      {token.revokedAt ? "REVOKED" : "ISSUED"}
+                    </span>
+                    <button
+                      className="ml-2 border border-ink px-2 py-1 font-mono text-[11px] uppercase"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        run("verify-actz", async () => {
+                          const result = await api.verifyActionAuthorization(id, token.id);
+                          setActionVerification(result);
+                        })
+                      }
+                    >
+                      Verify action token
+                    </button>
+                    {actionVerification ? (
+                      <p className="mt-2 font-mono text-[11px] text-navy/70">
+                        {actionVerification.outcome}
+                        {actionVerification.reasons.length > 0
+                          ? ` · ${actionVerification.reasons.join(", ")}`
+                          : ""}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })()}
         </div>
       </section>
 
