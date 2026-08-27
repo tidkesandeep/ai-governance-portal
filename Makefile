@@ -1,4 +1,4 @@
-.PHONY: install test api web compose-up compose-down opa-test
+.PHONY: install test api web compose-up compose-down opa-test migrate
 
 install:
 	python3 -m pip install -e "apps/api[dev]"
@@ -12,6 +12,9 @@ api:
 
 web:
 	cd apps/web && NEXT_PUBLIC_API_URL=$${NEXT_PUBLIC_API_URL:-http://localhost:8000} npm run dev
+
+migrate:
+	cd apps/api && python3 -m aigov.cli migrate
 
 compose-up:
 	docker compose -f infra/local/docker-compose.yml up --build
