@@ -213,3 +213,61 @@ class IncidentModel(Base):
     resolved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CapabilityModel(Base):
+    __tablename__ = "capabilities"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    bound_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(64))
+    resource_pattern: Mapped[str] = mapped_column(String(128))
+    max_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    requires_approval: Mapped[bool] = mapped_column(Boolean)
+    approved: Mapped[bool] = mapped_column(Boolean)
+    declared_by: Mapped[str] = mapped_column(String(64))
+    approved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    declared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ActionDecisionModel(Base):
+    __tablename__ = "action_decisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    outcome: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(64))
+    resource: Mapped[str] = mapped_column(String(128))
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    capability_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reasons: Mapped[list] = mapped_column(JSON)
+    required_actions: Mapped[list] = mapped_column(JSON)
+    policy_bundle: Mapped[str] = mapped_column(String(128))
+    policy_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(128))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ActionAuthorizationModel(Base):
+    __tablename__ = "action_authorizations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    decision_id: Mapped[str] = mapped_column(String(64), index=True)
+    asset_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(64))
+    resource: Mapped[str] = mapped_column(String(128))
+    nonce: Mapped[str] = mapped_column(String(128), unique=True)
+    fingerprint: Mapped[str] = mapped_column(String(128))
+    signature: Mapped[str] = mapped_column(String(128))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
