@@ -25,6 +25,14 @@ from aigov.domains.evidence.service import (
     controls_to_policy_document,
     reject_upload,
 )
+from aigov.domains.findings.service import (
+    FindingRuleError,
+    auto_promotes,
+    incident_fingerprint_records,
+    incident_title,
+    open_incidents_to_policy_document,
+    validate_finding,
+)
 from aigov.domains.identity.principal import Principal
 from aigov.domains.policy.engine import PolicyEngine, PolicyEvaluation
 from aigov.domains.risk.engine import assess as assess_risk
@@ -44,7 +52,9 @@ from aigov.infrastructure.models import (
     DeploymentAuthorizationModel,
     EvidenceArtifactModel,
     ExceptionModel,
+    FindingModel,
     GovernanceDecisionModel,
+    IncidentModel,
     PolicyDecisionModel,
     RiskAssessmentModel,
     WorkflowCaseModel,
@@ -75,6 +85,13 @@ class ExceptionRejectedError(Exception):
         self.code = code
 
 
+class FindingRejectedError(Exception):
+    def __init__(self, detail: str, code: str = "FINDING_REJECTED") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
 APPROVER_ROLES = {
     "privacy": ("privacy",),
     "security": ("security",),
@@ -82,6 +99,7 @@ APPROVER_ROLES = {
     "owner": ("owner",),
 }
 EXCEPTION_GRANT_ROLES = ("privacy", "security", "risk_reviewer")
+FINDING_REVIEW_ROLES = EXCEPTION_GRANT_ROLES
 
 
 @dataclass
@@ -332,6 +350,58 @@ class GovernanceService:
             raise NotFoundError(exception_id)
         return row
 
+    async def list_findings(self, principal: Principal, system_id: str) -> list[FindingModel]:
+        result = await self.session.scalars(
+            select(FindingModel)
+            .where(
+                FindingModel.tenant_id == principal.tenant_id,
+                FindingModel.system_id == system_id,
+            )
+            .order_by(FindingModel.recorded_at.desc())
+        )
+        return list(result)
+
+    async def get_finding(
+        self, principal: Principal, system_id: str, finding_id: str
+    ) -> FindingModel:
+        await self.get_system(principal, system_id)
+        row = await self.session.scalar(
+            select(FindingModel).where(
+                FindingModel.id == finding_id,
+                FindingModel.tenant_id == principal.tenant_id,
+                FindingModel.system_id == system_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError(finding_id)
+        return row
+
+    async def list_incidents(self, principal: Principal, system_id: str) -> list[IncidentModel]:
+        result = await self.session.scalars(
+            select(IncidentModel)
+            .where(
+                IncidentModel.tenant_id == principal.tenant_id,
+                IncidentModel.system_id == system_id,
+            )
+            .order_by(IncidentModel.opened_at.desc())
+        )
+        return list(result)
+
+    async def get_incident(
+        self, principal: Principal, system_id: str, incident_id: str
+    ) -> IncidentModel:
+        await self.get_system(principal, system_id)
+        row = await self.session.scalar(
+            select(IncidentModel).where(
+                IncidentModel.id == incident_id,
+                IncidentModel.tenant_id == principal.tenant_id,
+                IncidentModel.system_id == system_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError(incident_id)
+        return row
+
     async def assess(self, principal: Principal, system_id: str) -> RiskAssessmentModel:
         system = await self.get_system(principal, system_id)
         result = assess_risk(system.registration)
@@ -553,6 +623,7 @@ class GovernanceService:
         now = utcnow()
         await self._expire_stale_exceptions(principal, system, now)
         exception_rows = await self.list_exceptions(principal, system_id)
+        incident_rows = await self.list_incidents(principal, system_id)
         document = {
             "asset": {
                 "id": system.id,
@@ -577,6 +648,7 @@ class GovernanceService:
                 current_version_id=system.current_version_id,
                 now=now,
             ),
+            "incidents": open_incidents_to_policy_document(incident_rows),
         }
         evaluation: PolicyEvaluation = await self.policy_engine.evaluate_deployment(document)
         row = PolicyDecisionModel(
@@ -615,6 +687,7 @@ class GovernanceService:
                 current_version_id=system.current_version_id,
                 now=now,
             ),
+            incidents=incident_fingerprint_records(incident_rows),
         )
         fingerprint = governance_fingerprint(parts)
         snapshot = GovernanceDecisionModel(
@@ -911,6 +984,234 @@ class GovernanceService:
         await self.session.commit()
         await self.session.refresh(row)
         return row
+
+    async def record_finding(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        finding_type: str,
+        severity: str,
+        summary: str,
+        detector: str = "HUMAN",
+    ) -> FindingModel:
+        system = await self.get_system(principal, system_id)
+        try:
+            validate_finding(finding_type=finding_type, severity=severity, summary=summary)
+        except FindingRuleError as exc:
+            raise FindingRejectedError(exc.detail, exc.code) from exc
+        now = utcnow()
+        row = FindingModel(
+            id=new_id("fnd"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            incident_id=None,
+            bound_version_id=system.current_version_id,
+            finding_type=finding_type,
+            severity=severity,
+            summary=summary.strip(),
+            detector=(detector or "HUMAN").strip() or "HUMAN",
+            status="OPEN",
+            recorded_by=principal.actor_id,
+            recorded_at=now,
+            resolved_at=None,
+            dismissed_at=None,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="FindingRecorded",
+            actor=_actor(principal),
+            payload={
+                "findingId": row.id,
+                "findingType": finding_type,
+                "severity": severity,
+                "boundVersionId": system.current_version_id,
+            },
+        )
+        if auto_promotes(severity):
+            await self._promote_to_incident(principal, system, row, now)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def promote_finding(
+        self, principal: Principal, system_id: str, finding_id: str
+    ) -> FindingModel:
+        system = await self.get_system(principal, system_id)
+        if not principal.has_role(*FINDING_REVIEW_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to promote findings")
+        row = await self.get_finding(principal, system_id, finding_id)
+        if row.status != "OPEN":
+            raise FindingRejectedError("only an open finding can be promoted")
+        now = utcnow()
+        await self._promote_to_incident(principal, system, row, now)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def dismiss_finding(
+        self, principal: Principal, system_id: str, finding_id: str
+    ) -> FindingModel:
+        if not principal.has_role(*FINDING_REVIEW_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to dismiss findings")
+        row = await self.get_finding(principal, system_id, finding_id)
+        if row.status != "OPEN":
+            raise FindingRejectedError(
+                "promoted findings cannot be dismissed; resolve the incident"
+                if row.status == "PROMOTED"
+                else "only an open finding can be dismissed"
+            )
+        now = utcnow()
+        row.status = "DISMISSED"
+        row.dismissed_at = now
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system_id,
+            event_type="FindingDismissed",
+            actor=_actor(principal),
+            payload={"findingId": row.id, "findingType": row.finding_type},
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def resolve_incident(
+        self, principal: Principal, system_id: str, incident_id: str
+    ) -> IncidentModel:
+        if not principal.has_role(*FINDING_REVIEW_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to resolve incidents")
+        incident = await self.get_incident(principal, system_id, incident_id)
+        if incident.status != "OPEN":
+            raise FindingRejectedError("only an open incident can be resolved")
+        now = utcnow()
+        incident.status = "RESOLVED"
+        incident.resolved_by = principal.actor_id
+        incident.resolved_at = now
+        linked = await self.session.scalars(
+            select(FindingModel).where(
+                FindingModel.tenant_id == principal.tenant_id,
+                FindingModel.system_id == system_id,
+                FindingModel.incident_id == incident.id,
+            )
+        )
+        for finding in linked:
+            finding.status = "RESOLVED"
+            finding.resolved_at = now
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system_id,
+            event_type="IncidentResolved",
+            actor=_actor(principal),
+            payload={"incidentId": incident.id, "severity": incident.severity},
+        )
+        await self.session.commit()
+        await self.session.refresh(incident)
+        return incident
+
+    async def _promote_to_incident(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        finding: FindingModel,
+        now: datetime,
+    ) -> IncidentModel:
+        incident = IncidentModel(
+            id=new_id("inc"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            severity=finding.severity,
+            status="OPEN",
+            title=incident_title(finding.finding_type, finding.severity),
+            summary=finding.summary,
+            opened_by=principal.actor_id,
+            resolved_by=None,
+            opened_at=now,
+            resolved_at=None,
+        )
+        self.session.add(incident)
+        finding.status = "PROMOTED"
+        finding.incident_id = incident.id
+        system.status = "BLOCKED"
+        system.updated_at = now
+        await self._revoke_active_authorizations(principal, system, reason="RUNTIME_INCIDENT")
+        await self._revoke_open_exceptions(principal, system, now, reason="RUNTIME_INCIDENT")
+        await self._open_incident_case(principal, system, incident=incident, now=now)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="IncidentOpened",
+            actor=_actor(principal),
+            payload={
+                "incidentId": incident.id,
+                "findingId": finding.id,
+                "severity": incident.severity,
+            },
+        )
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="FindingPromoted",
+            actor=_actor(principal),
+            payload={"findingId": finding.id, "incidentId": incident.id},
+        )
+        return incident
+
+    async def _open_incident_case(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        *,
+        incident: IncidentModel,
+        now: datetime,
+    ) -> WorkflowCaseModel:
+        open_case = await self.open_case(principal, system.id)
+        codes = ["RUNTIME_INCIDENT"]
+        if open_case is None:
+            open_case = WorkflowCaseModel(
+                id=new_id("case"),
+                tenant_id=principal.tenant_id,
+                system_id=system.id,
+                decision_id=None,
+                snapshot_id=None,
+                case_type="INCIDENT",
+                status="OPEN",
+                risk_band=incident.severity,
+                reason_codes=codes,
+                opened_at=now,
+                due_at=compute_due_at(now, incident.severity),
+                closed_at=None,
+            )
+            self.session.add(open_case)
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="WorkflowCaseOpened",
+                actor=_actor(principal),
+                payload={
+                    "caseId": open_case.id,
+                    "reasonCodes": codes,
+                    "dueAt": open_case.due_at.isoformat(),
+                    "caseType": "INCIDENT",
+                },
+            )
+            return open_case
+        open_case.case_type = "INCIDENT"
+        open_case.reason_codes = list(dict.fromkeys([*(open_case.reason_codes or []), *codes]))
+        open_case.risk_band = incident.severity
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="WorkflowCaseUpdated",
+            actor=_actor(principal),
+            payload={
+                "caseId": open_case.id,
+                "reasonCodes": open_case.reason_codes,
+                "caseType": "INCIDENT",
+            },
+        )
+        return open_case
 
     def _issue_authorization(
         self,
