@@ -344,6 +344,41 @@ class ActionAuthorizationVerifyOut(BaseModel):
     authorization: ActionAuthorizationOut
 
 
+class ObservationRequest(BaseModel):
+    running: bool = True
+    assetVersionId: str | None = None
+    environment: str | None = None
+    cloud: str = "local"
+    region: str | None = None
+    fingerprint: str | None = None
+    observedAt: datetime | None = None
+
+
+class RuntimeObservationOut(BaseModel):
+    id: str
+    systemId: str
+    boundVersionId: str
+    environment: str
+    cloud: str
+    region: str | None = None
+    fingerprint: str | None = None
+    running: bool
+    observedAt: datetime
+    recordedBy: str
+    recordedAt: datetime
+
+
+class ReconciliationOut(BaseModel):
+    id: str
+    systemId: str
+    observationId: str | None = None
+    status: Literal["IN_SYNC", "DRIFT", "UNKNOWN"]
+    reasons: list[PolicyReasonOut] = Field(default_factory=list)
+    desired: dict[str, Any] = Field(default_factory=dict)
+    observed: dict[str, Any] | None = None
+    reconciledAt: datetime
+
+
 class ApprovalOut(BaseModel):
     function: str
     approved: bool
@@ -394,6 +429,8 @@ class AISystem360Out(BaseModel):
     capabilities: list[CapabilityOut] = Field(default_factory=list)
     latestActionDecision: ActionDecisionOut | None = None
     latestActionAuthorization: ActionAuthorizationOut | None = None
+    latestObservation: RuntimeObservationOut | None = None
+    latestReconciliation: ReconciliationOut | None = None
 
 
 class AuditEventOut(BaseModel):
