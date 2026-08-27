@@ -15,6 +15,7 @@ export type AISystem = {
   autonomyLevel: string;
   status: string;
   riskBand?: string | null;
+  currentVersionId?: string;
   createdAt: string;
   updatedAt?: string | null;
 };
@@ -66,6 +67,32 @@ export type AuditEvent = {
   previousEventHash?: string | null;
 };
 
+export type EvidenceArtifact = {
+  id: string;
+  systemId: string;
+  boundVersionId: string;
+  type: string;
+  filename: string;
+  uri: string;
+  sha256: string;
+  bytesSize: number;
+  collectorVersion: string;
+  verificationStatus: string;
+  collectedAt: string;
+  createdAt: string;
+};
+
+export type ControlAssessment = {
+  controlId: string;
+  evidenceType: string;
+  required: boolean;
+  status: string;
+  evidenceId?: string | null;
+  reason: string;
+  maxAgeDays: number;
+  sha256?: string | null;
+};
+
 export type AISystem360 = {
   system: AISystem;
   registration: Record<string, unknown>;
@@ -73,6 +100,8 @@ export type AISystem360 = {
   latestDecision?: PolicyDecision | null;
   approvals: Approval[];
   humanOversight: string[];
+  evidence: EvidenceArtifact[];
+  controls: ControlAssessment[];
 };
 
 export type Registration = {
