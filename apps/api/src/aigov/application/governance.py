@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -10,6 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aigov.config import Settings, get_settings
 from aigov.domains.audit.service import AuditLog
+from aigov.domains.authorization.service import (
+    AuthorizationCheck,
+    build_snapshot_parts,
+    evaluate_authorization,
+    governance_fingerprint,
+    sign_authorization,
+)
 from aigov.domains.evidence.service import (
     COLLECTOR_VERSION,
     ControlAssessment,
@@ -24,7 +32,9 @@ from aigov.infrastructure.ids import new_id, utcnow
 from aigov.infrastructure.models import (
     AISystemModel,
     ApprovalModel,
+    DeploymentAuthorizationModel,
     EvidenceArtifactModel,
+    GovernanceDecisionModel,
     PolicyDecisionModel,
     RiskAssessmentModel,
 )
@@ -53,6 +63,13 @@ APPROVER_ROLES = {
     "risk": ("risk_reviewer",),
     "owner": ("owner",),
 }
+
+
+@dataclass
+class GateResult:
+    decision: PolicyDecisionModel
+    snapshot: GovernanceDecisionModel
+    authorization: DeploymentAuthorizationModel | None
 
 
 def _slug(name: str) -> str:
@@ -162,6 +179,47 @@ class GovernanceService:
             .order_by(PolicyDecisionModel.decided_at.desc())
             .limit(1)
         )
+
+    async def latest_snapshot(
+        self, principal: Principal, system_id: str
+    ) -> GovernanceDecisionModel | None:
+        return await self.session.scalar(
+            select(GovernanceDecisionModel)
+            .where(
+                GovernanceDecisionModel.tenant_id == principal.tenant_id,
+                GovernanceDecisionModel.system_id == system_id,
+            )
+            .order_by(GovernanceDecisionModel.created_at.desc())
+            .limit(1)
+        )
+
+    async def latest_authorization(
+        self, principal: Principal, system_id: str
+    ) -> DeploymentAuthorizationModel | None:
+        return await self.session.scalar(
+            select(DeploymentAuthorizationModel)
+            .where(
+                DeploymentAuthorizationModel.tenant_id == principal.tenant_id,
+                DeploymentAuthorizationModel.system_id == system_id,
+            )
+            .order_by(DeploymentAuthorizationModel.issued_at.desc())
+            .limit(1)
+        )
+
+    async def get_authorization(
+        self, principal: Principal, system_id: str, authorization_id: str
+    ) -> DeploymentAuthorizationModel:
+        await self.get_system(principal, system_id)
+        row = await self.session.scalar(
+            select(DeploymentAuthorizationModel).where(
+                DeploymentAuthorizationModel.id == authorization_id,
+                DeploymentAuthorizationModel.tenant_id == principal.tenant_id,
+                DeploymentAuthorizationModel.system_id == system_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError(authorization_id)
+        return row
 
     async def list_approvals(self, principal: Principal, system_id: str) -> list[ApprovalModel]:
         result = await self.session.scalars(
@@ -370,6 +428,9 @@ class GovernanceService:
     async def cut_version(self, principal: Principal, system_id: str) -> AISystemModel:
         system = await self.get_system(principal, system_id)
         previous = system.current_version_id
+        revoked_ids = await self._revoke_active_authorizations(
+            principal, system, reason="ASSET_VERSION_CREATED"
+        )
         system.current_version_id = new_id("ver")
         system.updated_at = utcnow()
         await self.audit.append(
@@ -377,7 +438,11 @@ class GovernanceService:
             aggregate_id=system.id,
             event_type="AssetVersionCreated",
             actor=_actor(principal),
-            payload={"previousVersionId": previous, "versionId": system.current_version_id},
+            payload={
+                "previousVersionId": previous,
+                "versionId": system.current_version_id,
+                "revokedAuthorizationIds": revoked_ids,
+            },
         )
         await self.session.commit()
         await self.session.refresh(system)
@@ -390,7 +455,10 @@ class GovernanceService:
         *,
         environment: str | None = None,
         evidence_stale: bool = False,
-    ) -> PolicyDecisionModel:
+        cloud: str = "local",
+        region: str | None = None,
+        audience: str = "cicd",
+    ) -> GateResult:
         system = await self.get_system(principal, system_id)
         assessment = await self.latest_assessment(principal, system_id)
         approvals = await self.list_approvals(principal, system_id)
@@ -399,6 +467,7 @@ class GovernanceService:
         posture = assess_controls(system, assessment, artifacts)
         evidence_doc = controls_to_policy_document(posture)
         evidence_doc["stale"] = bool(evidence_stale or evidence_doc["stale"])
+        target_environment = environment or system.environment
         document = {
             "asset": {
                 "id": system.id,
@@ -407,7 +476,7 @@ class GovernanceService:
                 "autonomy_level": system.autonomy_level,
                 "uses_customer_decision": bool(system.registration.get("usesCustomerDecision")),
                 "status": system.status,
-                "environment": environment or system.environment,
+                "environment": target_environment,
                 "version_id": system.current_version_id,
             },
             "approvals": approval_map,
@@ -433,9 +502,55 @@ class GovernanceService:
             input_digest=_digest(document),
             decided_at=now,
         )
+        parts = build_snapshot_parts(
+            asset_version_id=system.current_version_id,
+            environment=target_environment,
+            risk={
+                "band": assessment.risk_band if assessment else None,
+                "score": assessment.score if assessment else None,
+                "confidence": assessment.confidence if assessment else None,
+                "engineVersion": assessment.engine_version if assessment else None,
+            },
+            controls=_control_records(posture),
+            evidence_hashes=[artifact.sha256 for artifact in artifacts],
+            approvals=approval_map,
+            policy_bundle=evaluation.policy_bundle,
+            policy_digest=evaluation.policy_digest,
+            engine_versions={
+                "risk": self.settings.risk_engine_version,
+                "policy": evaluation.policy_bundle,
+                "collector": self.settings.collector_version or COLLECTOR_VERSION,
+            },
+        )
+        fingerprint = governance_fingerprint(parts)
+        snapshot = GovernanceDecisionModel(
+            id=new_id("snap"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            policy_decision_id=row.id,
+            outcome=evaluation.outcome,
+            asset_version_id=system.current_version_id,
+            fingerprint=fingerprint,
+            snapshot=parts,
+            created_at=now,
+        )
         system.status = _status_after_gate(system.status, evaluation.outcome)
         system.updated_at = now
         self.session.add(row)
+        self.session.add(snapshot)
+        authorization: DeploymentAuthorizationModel | None = None
+        if evaluation.outcome == "ALLOW":
+            authorization = self._issue_authorization(
+                principal,
+                system,
+                snapshot,
+                environment=target_environment,
+                cloud=cloud,
+                region=region,
+                audience=audience,
+                issued_at=now,
+            )
+            self.session.add(authorization)
         await self.audit.append(
             tenant_id=principal.tenant_id,
             aggregate_id=system.id,
@@ -443,14 +558,158 @@ class GovernanceService:
             actor=_actor(principal),
             payload={
                 "decisionId": row.id,
+                "snapshotId": snapshot.id,
                 "outcome": evaluation.outcome,
+                "fingerprint": fingerprint,
+                "authorizationId": authorization.id if authorization else None,
                 "reasons": [reason.code for reason in evaluation.reasons],
                 "policyBundle": evaluation.policy_bundle,
             },
         )
+        if authorization is not None:
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="DeploymentAuthorizationIssued",
+                actor=_actor(principal),
+                payload={
+                    "authorizationId": authorization.id,
+                    "snapshotId": snapshot.id,
+                    "fingerprint": fingerprint,
+                    "expiresAt": authorization.expires_at.isoformat(),
+                },
+            )
         await self.session.commit()
         await self.session.refresh(row)
+        await self.session.refresh(snapshot)
+        if authorization is not None:
+            await self.session.refresh(authorization)
+        return GateResult(decision=row, snapshot=snapshot, authorization=authorization)
+
+    async def verify_authorization(
+        self,
+        principal: Principal,
+        system_id: str,
+        authorization_id: str,
+        *,
+        presented_signature: str | None = None,
+        consume: bool = False,
+    ) -> tuple[DeploymentAuthorizationModel, AuthorizationCheck]:
+        system = await self.get_system(principal, system_id)
+        row = await self.get_authorization(principal, system_id, authorization_id)
+        check = evaluate_authorization(
+            secret=self.settings.authorization_secret,
+            authorization_id=row.id,
+            fingerprint=row.fingerprint,
+            nonce=row.nonce,
+            expires_at=row.expires_at,
+            signature=row.signature,
+            presented_signature=presented_signature,
+            now=utcnow(),
+            revoked_at=row.revoked_at,
+            consumed_at=row.consumed_at,
+            bound_version_id=row.asset_version_id,
+            current_version_id=system.current_version_id,
+        )
+        if check.outcome == "ALLOW" and consume:
+            row.consumed_at = utcnow()
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="DeploymentAuthorizationVerified",
+            actor=_actor(principal),
+            payload={
+                "authorizationId": row.id,
+                "outcome": check.outcome,
+                "reasons": check.reasons,
+                "consumed": bool(consume and check.outcome == "ALLOW"),
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row, check
+
+    async def revoke_authorization(
+        self, principal: Principal, system_id: str, authorization_id: str
+    ) -> DeploymentAuthorizationModel:
+        row = await self.get_authorization(principal, system_id, authorization_id)
+        if row.revoked_at is None:
+            row.revoked_at = utcnow()
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system_id,
+                event_type="DeploymentAuthorizationRevoked",
+                actor=_actor(principal),
+                payload={"authorizationId": row.id, "fingerprint": row.fingerprint},
+            )
+            await self.session.commit()
+            await self.session.refresh(row)
         return row
+
+    def _issue_authorization(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        snapshot: GovernanceDecisionModel,
+        *,
+        environment: str,
+        cloud: str,
+        region: str | None,
+        audience: str,
+        issued_at: datetime,
+    ) -> DeploymentAuthorizationModel:
+        authorization_id = new_id("authz")
+        nonce = new_id("nce")
+        ttl = max(0, int(self.settings.authorization_ttl_seconds))
+        expires_at = issued_at + timedelta(seconds=ttl)
+        signature = sign_authorization(
+            secret=self.settings.authorization_secret,
+            authorization_id=authorization_id,
+            fingerprint=snapshot.fingerprint,
+            nonce=nonce,
+            expires_at=expires_at,
+        )
+        return DeploymentAuthorizationModel(
+            id=authorization_id,
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            decision_id=snapshot.id,
+            asset_version_id=snapshot.asset_version_id,
+            environment=environment,
+            cloud=cloud,
+            region=region,
+            audience=audience,
+            nonce=nonce,
+            fingerprint=snapshot.fingerprint,
+            signature=signature,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+
+    async def _revoke_active_authorizations(
+        self, principal: Principal, system: AISystemModel, *, reason: str
+    ) -> list[str]:
+        result = await self.session.scalars(
+            select(DeploymentAuthorizationModel).where(
+                DeploymentAuthorizationModel.tenant_id == principal.tenant_id,
+                DeploymentAuthorizationModel.system_id == system.id,
+                DeploymentAuthorizationModel.revoked_at.is_(None),
+            )
+        )
+        now = utcnow()
+        revoked_ids: list[str] = []
+        for row in result:
+            row.revoked_at = now
+            revoked_ids.append(row.id)
+        if revoked_ids:
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="DeploymentAuthorizationRevoked",
+                actor=_actor(principal),
+                payload={"authorizationIds": revoked_ids, "reason": reason},
+            )
+        return revoked_ids
 
 
 def _actor(principal: Principal) -> dict[str, str]:
@@ -459,6 +718,19 @@ def _actor(principal: Principal) -> dict[str, str]:
 
 def _owner_actor(system: AISystemModel) -> str | None:
     return None
+
+
+def _control_records(posture: list[ControlAssessment]) -> list[dict[str, Any]]:
+    return [
+        {
+            "controlId": item.control_id,
+            "evidenceType": item.evidence_type,
+            "status": item.status,
+            "evidenceId": item.evidence_id,
+            "sha256": item.sha256,
+        }
+        for item in posture
+    ]
 
 
 def _approval_map(rows: list[ApprovalModel]) -> dict[str, bool]:
