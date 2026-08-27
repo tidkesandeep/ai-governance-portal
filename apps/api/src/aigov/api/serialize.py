@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from aigov.api.schemas import (
+    ActionAuthorizationOut,
+    ActionDecisionOut,
     AISystem360Out,
     AISystemOut,
     ApprovalOut,
     AuditEventOut,
+    CapabilityOut,
     ControlAssessmentOut,
     DeploymentAuthorizationOut,
     EvidenceArtifactOut,
@@ -18,14 +21,17 @@ from aigov.api.schemas import (
     RiskDriverOut,
     WorkflowCaseOut,
 )
-from aigov.application.governance import GateResult
+from aigov.application.governance import ActionResult, GateResult
 from aigov.domains.evidence.service import ControlAssessment
 from aigov.domains.workflow.service import compute_sla_status
 from aigov.infrastructure.ids import utcnow
 from aigov.infrastructure.models import (
+    ActionAuthorizationModel,
+    ActionDecisionModel,
     AISystemModel,
     ApprovalModel,
     AuditEventModel,
+    CapabilityModel,
     DeploymentAuthorizationModel,
     EvidenceArtifactModel,
     ExceptionModel,
@@ -260,6 +266,71 @@ def incident_out(row: IncidentModel) -> IncidentOut:
     )
 
 
+def capability_out(row: CapabilityModel) -> CapabilityOut:
+    return CapabilityOut(
+        id=row.id,
+        systemId=row.system_id,
+        boundVersionId=row.bound_version_id,
+        action=row.action,
+        resourcePattern=row.resource_pattern,
+        maxAmount=row.max_amount,
+        requiresApproval=row.requires_approval,
+        approved=row.approved,
+        declaredBy=row.declared_by,
+        approvedBy=row.approved_by,
+        declaredAt=row.declared_at,
+        approvedAt=row.approved_at,
+        revokedAt=row.revoked_at,
+    )
+
+
+def action_decision_out(
+    row: ActionDecisionModel, *, authorization_id: str | None = None
+) -> ActionDecisionOut:
+    return ActionDecisionOut(
+        id=row.id,
+        systemId=row.system_id,
+        outcome=row.outcome,
+        action=row.action,
+        resource=row.resource,
+        amount=row.amount,
+        capabilityId=row.capability_id,
+        reasons=[PolicyReasonOut(**item) for item in row.reasons],
+        requiredActions=row.required_actions,
+        policyBundle=row.policy_bundle,
+        policyDigest=row.policy_digest,
+        inputDigest=row.input_digest,
+        fingerprint=row.fingerprint,
+        authorizationId=authorization_id,
+        decidedAt=row.decided_at,
+    )
+
+
+def action_authorization_out(row: ActionAuthorizationModel) -> ActionAuthorizationOut:
+    return ActionAuthorizationOut(
+        id=row.id,
+        systemId=row.system_id,
+        decisionId=row.decision_id,
+        assetVersionId=row.asset_version_id,
+        action=row.action,
+        resource=row.resource,
+        nonce=row.nonce,
+        fingerprint=row.fingerprint,
+        signature=row.signature,
+        issuedAt=row.issued_at,
+        expiresAt=row.expires_at,
+        revokedAt=row.revoked_at,
+        consumedAt=row.consumed_at,
+    )
+
+
+def action_gate_out(result: ActionResult) -> ActionDecisionOut:
+    return action_decision_out(
+        result.decision,
+        authorization_id=result.authorization.id if result.authorization else None,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
@@ -273,6 +344,9 @@ def system_360(
     exceptions: list[ExceptionModel] | None = None,
     findings: list[FindingModel] | None = None,
     incidents: list[IncidentModel] | None = None,
+    capabilities: list[CapabilityModel] | None = None,
+    action_decision: ActionDecisionModel | None = None,
+    action_authorization: ActionAuthorizationModel | None = None,
 ) -> AISystem360Out:
     case_items = [case_out(row) for row in cases or []]
     incident_items = [incident_out(row) for row in incidents or []]
@@ -310,4 +384,20 @@ def system_360(
         findings=[finding_out(row) for row in findings or []],
         incidents=incident_items,
         latestIncident=latest_incident,
+        capabilities=[capability_out(row) for row in capabilities or []],
+        latestActionDecision=action_decision_out(
+            action_decision,
+            authorization_id=(
+                action_authorization.id
+                if action_authorization is not None
+                and action_decision is not None
+                and action_authorization.decision_id == action_decision.id
+                else None
+            ),
+        )
+        if action_decision
+        else None,
+        latestActionAuthorization=(
+            action_authorization_out(action_authorization) if action_authorization else None
+        ),
     )
