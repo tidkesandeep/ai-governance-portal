@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     collector_version: str = "evidence-collector@0.2.0"
     authorization_secret: str = "dev-only-authorization-secret"
     authorization_ttl_seconds: int = 900
+    action_authorization_ttl_seconds: int = 60
 
     @property
     def cors_origin_list(self) -> list[str]:
