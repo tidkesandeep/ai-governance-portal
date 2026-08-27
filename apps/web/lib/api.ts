@@ -1,6 +1,12 @@
 "use client";
 
-import type { AISystem360, AuditEvent, PolicyDecision, Registration, RiskAssessment } from "./types";
+import type {
+  AISystem360,
+  AuditEvent,
+  PolicyDecision,
+  Registration,
+  RiskAssessment,
+} from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export const TOKEN_KEY = "aigov.token";
@@ -51,5 +57,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ evidenceStale }),
     }),
+  attachEvidence: (
+    id: string,
+    body: { type: string; filename: string; content: string; collectedAt?: string },
+  ) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/evidence`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  cutVersion: (id: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/versions`, { method: "POST" }),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
