@@ -10,6 +10,7 @@ export function bandClass(band?: string | null) {
     case "PASS":
     case "GRANTED":
     case "ON_TRACK":
+    case "APPROVED":
       return "bg-forest/10 text-forest border-forest/30";
     case "UNKNOWN":
     case "STALE":
