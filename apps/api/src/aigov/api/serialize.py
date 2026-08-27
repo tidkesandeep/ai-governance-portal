@@ -8,23 +8,29 @@ from aigov.api.schemas import (
     ControlAssessmentOut,
     DeploymentAuthorizationOut,
     EvidenceArtifactOut,
+    ExceptionOut,
     GovernanceSnapshotOut,
     PolicyDecisionOut,
     PolicyReasonOut,
     RiskAssessmentOut,
     RiskDriverOut,
+    WorkflowCaseOut,
 )
 from aigov.application.governance import GateResult
 from aigov.domains.evidence.service import ControlAssessment
+from aigov.domains.workflow.service import compute_sla_status
+from aigov.infrastructure.ids import utcnow
 from aigov.infrastructure.models import (
     AISystemModel,
     ApprovalModel,
     AuditEventModel,
     DeploymentAuthorizationModel,
     EvidenceArtifactModel,
+    ExceptionModel,
     GovernanceDecisionModel,
     PolicyDecisionModel,
     RiskAssessmentModel,
+    WorkflowCaseModel,
 )
 
 
@@ -181,6 +187,42 @@ def control_out(item: ControlAssessment) -> ControlAssessmentOut:
     )
 
 
+def case_out(row: WorkflowCaseModel) -> WorkflowCaseOut:
+    return WorkflowCaseOut(
+        id=row.id,
+        systemId=row.system_id,
+        decisionId=row.decision_id,
+        snapshotId=row.snapshot_id,
+        caseType=row.case_type,
+        status=row.status,
+        riskBand=row.risk_band,
+        reasonCodes=list(row.reason_codes or []),
+        slaStatus=compute_sla_status(row.opened_at, row.due_at, utcnow()),
+        openedAt=row.opened_at,
+        dueAt=row.due_at,
+        closedAt=row.closed_at,
+    )
+
+
+def exception_out(row: ExceptionModel) -> ExceptionOut:
+    return ExceptionOut(
+        id=row.id,
+        systemId=row.system_id,
+        caseId=row.case_id,
+        violationCode=row.violation_code,
+        controlId=row.control_id,
+        boundVersionId=row.bound_version_id,
+        justification=row.justification,
+        status=row.status,
+        requestedBy=row.requested_by,
+        grantedBy=row.granted_by,
+        requestedAt=row.requested_at,
+        grantedAt=row.granted_at,
+        expiresAt=row.expires_at,
+        revokedAt=row.revoked_at,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
@@ -190,7 +232,10 @@ def system_360(
     controls: list[ControlAssessment] | None = None,
     snapshot: GovernanceDecisionModel | None = None,
     authorization: DeploymentAuthorizationModel | None = None,
+    cases: list[WorkflowCaseModel] | None = None,
+    exceptions: list[ExceptionModel] | None = None,
 ) -> AISystem360Out:
+    case_items = [case_out(row) for row in cases or []]
     return AISystem360Out(
         system=system_out(system, assessment.risk_band if assessment else None),
         registration=system.registration,
@@ -215,4 +260,7 @@ def system_360(
         controls=[control_out(item) for item in controls or []],
         latestSnapshot=snapshot_out(snapshot) if snapshot else None,
         latestAuthorization=authorization_out(authorization) if authorization else None,
+        latestCase=case_items[0] if case_items else None,
+        cases=case_items,
+        exceptions=[exception_out(row) for row in exceptions or []],
     )
