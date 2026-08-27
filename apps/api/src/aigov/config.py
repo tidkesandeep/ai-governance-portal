@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     authorization_secret: str = "dev-only-authorization-secret"
     authorization_ttl_seconds: int = 900
     action_authorization_ttl_seconds: int = 60
+    observation_max_age_seconds: int = 900
 
     @property
     def cors_origin_list(self) -> list[str]:
