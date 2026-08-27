@@ -7,13 +7,23 @@ from aigov.api.schemas import (
     AISystemRegistration,
     ApprovalRequest,
     AuditEventListOut,
+    AuthorizationVerifyOut,
+    AuthorizationVerifyRequest,
+    DeploymentAuthorizationOut,
     DeploymentGateRequest,
     EvidenceAttachRequest,
     OversightRequest,
     PolicyDecisionOut,
     RiskAssessmentOut,
 )
-from aigov.api.serialize import assessment_out, audit_out, decision_out, system_360, system_out
+from aigov.api.serialize import (
+    assessment_out,
+    audit_out,
+    authorization_out,
+    gate_out,
+    system_360,
+    system_out,
+)
 from aigov.application.governance import (
     EvidenceRejectedError,
     GovernanceService,
@@ -46,7 +56,18 @@ async def _system_360(
     approvals = await svc.list_approvals(principal, system_id)
     evidence = await svc.list_evidence(principal, system_id)
     controls = await svc.control_posture(principal, system_id)
-    return system_360(system, assessment, decision, approvals, evidence, controls)
+    snapshot = await svc.latest_snapshot(principal, system_id)
+    authorization = await svc.latest_authorization(principal, system_id)
+    return system_360(
+        system,
+        assessment,
+        decision,
+        approvals,
+        evidence,
+        controls,
+        snapshot,
+        authorization,
+    )
 
 
 @router.get("", response_model=AISystemListOut)
@@ -145,15 +166,18 @@ async def evaluate_gate(
 ) -> PolicyDecisionOut:
     payload = body or DeploymentGateRequest()
     try:
-        row = await svc.evaluate_gate(
+        result = await svc.evaluate_gate(
             principal,
             system_id,
             environment=payload.environment,
             evidence_stale=payload.evidenceStale,
+            cloud=payload.cloud,
+            region=payload.region,
+            audience=payload.audience,
         )
     except NotFoundError as exc:
         raise _not_found() from exc
-    return decision_out(row)
+    return gate_out(result)
 
 
 @router.get("/{system_id}/audit-events", response_model=AuditEventListOut)
@@ -216,6 +240,52 @@ async def verify_evidence(
         return await _system_360(svc, principal, system_id)
     except NotFoundError as exc:
         raise _not_found() from exc
+
+
+@router.post(
+    "/{system_id}/authorizations/{authorization_id}/verify",
+    response_model=AuthorizationVerifyOut,
+)
+async def verify_authorization(
+    system_id: str,
+    authorization_id: str,
+    body: AuthorizationVerifyRequest | None = None,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AuthorizationVerifyOut:
+    payload = body or AuthorizationVerifyRequest()
+    try:
+        row, check = await svc.verify_authorization(
+            principal,
+            system_id,
+            authorization_id,
+            presented_signature=payload.signature,
+            consume=payload.consume,
+        )
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    return AuthorizationVerifyOut(
+        outcome=check.outcome,
+        reasons=check.reasons,
+        authorization=authorization_out(row),
+    )
+
+
+@router.post(
+    "/{system_id}/authorizations/{authorization_id}/revoke",
+    response_model=DeploymentAuthorizationOut,
+)
+async def revoke_authorization(
+    system_id: str,
+    authorization_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> DeploymentAuthorizationOut:
+    try:
+        row = await svc.revoke_authorization(principal, system_id, authorization_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    return authorization_out(row)
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
