@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from aigov.api.routers import health, identity, systems
+from aigov.api.routers import health, identity, integrations, outbox, systems
 from aigov.config import get_settings
 from aigov.infrastructure.db import create_schema, dispose_engine, init_engine
 
@@ -19,7 +19,7 @@ async def lifespan(_app: FastAPI):
     last_error: Exception | None = None
     for attempt in range(10):
         try:
-            await create_schema()
+            await create_schema(settings.database_url)
             last_error = None
             break
         except Exception as exc:  # noqa: BLE001 — retry compose/postgres races
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="AI Governance Control Plane API",
-        version="0.8.0",
+        version="0.9.0",
         lifespan=lifespan,
     )
     app.add_middleware(
@@ -48,6 +48,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(identity.router)
     app.include_router(systems.router)
+    app.include_router(outbox.router)
+    app.include_router(integrations.router)
 
     @app.exception_handler(HTTPException)
     async def http_problem(_request: Request, exc: HTTPException) -> JSONResponse:
