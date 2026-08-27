@@ -12,6 +12,7 @@ from aigov.api.schemas import (
     DeploymentAuthorizationOut,
     DeploymentGateRequest,
     EvidenceAttachRequest,
+    ExceptionRequest,
     OversightRequest,
     PolicyDecisionOut,
     RiskAssessmentOut,
@@ -26,6 +27,7 @@ from aigov.api.serialize import (
 )
 from aigov.application.governance import (
     EvidenceRejectedError,
+    ExceptionRejectedError,
     GovernanceService,
     NotFoundError,
     SegregationOfDutiesError,
@@ -47,6 +49,32 @@ def _not_found() -> HTTPException:
     )
 
 
+def _sod(exc: SegregationOfDutiesError) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "type": "https://api.aigov.local/problems/segregation-of-duties",
+            "title": "Segregation of duties violation",
+            "status": 409,
+            "code": "SOD_VIOLATION",
+            "detail": exc.detail,
+        },
+    )
+
+
+def _exception_rejected(exc: ExceptionRejectedError) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "type": "https://api.aigov.local/problems/exception-rejected",
+            "title": "Exception rejected",
+            "status": 422,
+            "code": exc.code,
+            "detail": exc.detail,
+        },
+    )
+
+
 async def _system_360(
     svc: GovernanceService, principal: Principal, system_id: str
 ) -> AISystem360Out:
@@ -58,6 +86,8 @@ async def _system_360(
     controls = await svc.control_posture(principal, system_id)
     snapshot = await svc.latest_snapshot(principal, system_id)
     authorization = await svc.latest_authorization(principal, system_id)
+    cases = await svc.list_cases(principal, system_id)
+    exceptions = await svc.list_exceptions(principal, system_id)
     return system_360(
         system,
         assessment,
@@ -67,6 +97,8 @@ async def _system_360(
         controls,
         snapshot,
         authorization,
+        cases,
+        exceptions,
     )
 
 
@@ -286,6 +318,83 @@ async def revoke_authorization(
     except NotFoundError as exc:
         raise _not_found() from exc
     return authorization_out(row)
+
+
+@router.post("/{system_id}/exceptions", response_model=AISystem360Out, status_code=201)
+async def request_exception(
+    system_id: str,
+    body: ExceptionRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.request_exception(
+            principal,
+            system_id,
+            violation_code=body.violationCode,
+            justification=body.justification,
+            expires_at=body.expiresAt,
+            control_id=body.controlId,
+        )
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except ExceptionRejectedError as exc:
+        raise _exception_rejected(exc) from exc
+
+
+@router.post("/{system_id}/exceptions/{exception_id}/grant", response_model=AISystem360Out)
+async def grant_exception(
+    system_id: str,
+    exception_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.grant_exception(principal, system_id, exception_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except ExceptionRejectedError as exc:
+        raise _exception_rejected(exc) from exc
+
+
+@router.post("/{system_id}/exceptions/{exception_id}/deny", response_model=AISystem360Out)
+async def deny_exception(
+    system_id: str,
+    exception_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.deny_exception(principal, system_id, exception_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except ExceptionRejectedError as exc:
+        raise _exception_rejected(exc) from exc
+
+
+@router.post("/{system_id}/exceptions/{exception_id}/revoke", response_model=AISystem360Out)
+async def revoke_exception(
+    system_id: str,
+    exception_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.revoke_exception(principal, system_id, exception_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except ExceptionRejectedError as exc:
+        raise _exception_rejected(exc) from exc
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
