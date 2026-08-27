@@ -79,5 +79,16 @@ export const api = {
       `/v1/ai-systems/${id}/authorizations/${authorizationId}/revoke`,
       { method: "POST" },
     ),
+  requestException: (id: string, violationCode: string, justification: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/exceptions`, {
+      method: "POST",
+      body: JSON.stringify({ violationCode, justification }),
+    }),
+  grantException: (id: string, exceptionId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/exceptions/${exceptionId}/grant`, { method: "POST" }),
+  denyException: (id: string, exceptionId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/exceptions/${exceptionId}/deny`, { method: "POST" }),
+  revokeException: (id: string, exceptionId: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/exceptions/${exceptionId}/revoke`, { method: "POST" }),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
