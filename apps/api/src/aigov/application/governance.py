@@ -42,6 +42,16 @@ from aigov.domains.findings.service import (
 )
 from aigov.domains.identity.principal import Principal
 from aigov.domains.policy.engine import PolicyEngine, PolicyEvaluation
+from aigov.domains.reconciliation.service import (
+    ObservationRuleError,
+    ObservedState,
+    ReconciliationOutcome,
+    desired_from_snapshot,
+    reconcile,
+    reconciliation_fingerprint_record,
+    reconciliation_to_policy_document,
+    validate_observation,
+)
 from aigov.domains.risk.engine import assess as assess_risk
 from aigov.domains.workflow.service import (
     ExceptionRuleError,
@@ -66,7 +76,9 @@ from aigov.infrastructure.models import (
     GovernanceDecisionModel,
     IncidentModel,
     PolicyDecisionModel,
+    ReconciliationResultModel,
     RiskAssessmentModel,
+    RuntimeObservationModel,
     WorkflowCaseModel,
 )
 from aigov.infrastructure.object_store import ObjectStorePort
@@ -104,6 +116,13 @@ class FindingRejectedError(Exception):
 
 class CapabilityRejectedError(Exception):
     def __init__(self, detail: str, code: str = "CAPABILITY_REJECTED") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
+class ObservationRejectedError(Exception):
+    def __init__(self, detail: str, code: str = "OBSERVATION_REJECTED") -> None:
         super().__init__(detail)
         self.detail = detail
         self.code = code
@@ -480,6 +499,47 @@ class GovernanceService:
             .limit(1)
         )
 
+    async def latest_observation(
+        self, principal: Principal, system_id: str
+    ) -> RuntimeObservationModel | None:
+        return await self.session.scalar(
+            select(RuntimeObservationModel)
+            .where(
+                RuntimeObservationModel.tenant_id == principal.tenant_id,
+                RuntimeObservationModel.system_id == system_id,
+            )
+            .order_by(RuntimeObservationModel.recorded_at.desc())
+            .limit(1)
+        )
+
+    async def latest_reconciliation(
+        self, principal: Principal, system_id: str
+    ) -> ReconciliationResultModel | None:
+        return await self.session.scalar(
+            select(ReconciliationResultModel)
+            .where(
+                ReconciliationResultModel.tenant_id == principal.tenant_id,
+                ReconciliationResultModel.system_id == system_id,
+            )
+            .order_by(ReconciliationResultModel.reconciled_at.desc())
+            .limit(1)
+        )
+
+    async def latest_allow_snapshot(
+        self, principal: Principal, system: AISystemModel
+    ) -> GovernanceDecisionModel | None:
+        return await self.session.scalar(
+            select(GovernanceDecisionModel)
+            .where(
+                GovernanceDecisionModel.tenant_id == principal.tenant_id,
+                GovernanceDecisionModel.system_id == system.id,
+                GovernanceDecisionModel.outcome == "ALLOW",
+                GovernanceDecisionModel.asset_version_id == system.current_version_id,
+            )
+            .order_by(GovernanceDecisionModel.created_at.desc())
+            .limit(1)
+        )
+
     async def get_action_authorization(
         self, principal: Principal, system_id: str, authorization_id: str
     ) -> ActionAuthorizationModel:
@@ -717,6 +777,14 @@ class GovernanceService:
         await self._expire_stale_exceptions(principal, system, now)
         exception_rows = await self.list_exceptions(principal, system_id)
         incident_rows = await self.list_incidents(principal, system_id)
+        observation = await self.latest_observation(principal, system_id)
+        recon_outcome, _recon_row = await self._reconcile_now(
+            principal,
+            system,
+            observation=observation,
+            now=now,
+            assessment=assessment,
+        )
         document = {
             "asset": {
                 "id": system.id,
@@ -742,6 +810,7 @@ class GovernanceService:
                 now=now,
             ),
             "incidents": open_incidents_to_policy_document(incident_rows),
+            "reconciliation": reconciliation_to_policy_document(recon_outcome),
         }
         evaluation: PolicyEvaluation = await self.policy_engine.evaluate_deployment(document)
         row = PolicyDecisionModel(
@@ -781,6 +850,7 @@ class GovernanceService:
                 now=now,
             ),
             incidents=incident_fingerprint_records(incident_rows),
+            reconciliation=reconciliation_fingerprint_record(recon_outcome),
         )
         fingerprint = governance_fingerprint(parts)
         snapshot = GovernanceDecisionModel(
@@ -1203,6 +1273,95 @@ class GovernanceService:
         await self.session.refresh(incident)
         return incident
 
+    async def record_observation(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        running: bool = True,
+        asset_version_id: str | None = None,
+        environment: str | None = None,
+        cloud: str = "local",
+        region: str | None = None,
+        fingerprint: str | None = None,
+        observed_at: datetime | None = None,
+    ) -> RuntimeObservationModel:
+        system = await self.get_system(principal, system_id)
+        assessment = await self.latest_assessment(principal, system_id)
+        now = utcnow()
+        allow_snapshot = await self.latest_allow_snapshot(principal, system)
+        desired = desired_from_snapshot(
+            allow_snapshot,
+            current_version_id=system.current_version_id,
+            environment=system.environment,
+        )
+        bound_version = (asset_version_id or system.current_version_id or "").strip()
+        env = (environment or system.environment or "").strip()
+        observed_fingerprint = fingerprint.strip() if isinstance(fingerprint, str) else fingerprint
+        if not observed_fingerprint:
+            observed_fingerprint = desired.fingerprint
+        try:
+            validate_observation(asset_version_id=bound_version, environment=env)
+        except ObservationRuleError as exc:
+            raise ObservationRejectedError(exc.detail, exc.code) from exc
+        row = RuntimeObservationModel(
+            id=new_id("obs"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            bound_version_id=bound_version,
+            environment=env,
+            cloud=(cloud or "local").strip() or "local",
+            region=region,
+            fingerprint=observed_fingerprint,
+            running=bool(running),
+            observed_at=as_utc(observed_at) if observed_at else now,
+            recorded_by=principal.actor_id,
+            recorded_at=now,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="RuntimeObservationRecorded",
+            actor=_actor(principal),
+            payload={
+                "observationId": row.id,
+                "boundVersionId": row.bound_version_id,
+                "environment": row.environment,
+                "running": row.running,
+            },
+        )
+        outcome, recon = await self._reconcile_now(
+            principal,
+            system,
+            observation=row,
+            now=now,
+            assessment=assessment,
+        )
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="ReconciliationComputed",
+            actor=_actor(principal),
+            payload={
+                "reconciliationId": recon.id,
+                "observationId": row.id,
+                "status": outcome.status,
+                "reasons": [item.get("code") for item in outcome.reasons],
+            },
+        )
+        if outcome.high_drift:
+            await self._contain_runtime_drift(
+                principal,
+                system,
+                outcome=outcome,
+                assessment=assessment,
+                now=now,
+            )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
     async def declare_capability(
         self,
         principal: Principal,
@@ -1552,6 +1711,130 @@ class GovernanceService:
         )
         return incident
 
+    async def _contain_runtime_drift(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        *,
+        outcome: ReconciliationOutcome,
+        assessment: RiskAssessmentModel | None,
+        now: datetime,
+    ) -> None:
+        system.status = "BLOCKED"
+        system.updated_at = now
+        await self._revoke_active_authorizations(principal, system, reason="RUNTIME_DRIFT")
+        await self._open_reconciliation_case(
+            principal,
+            system,
+            codes=[item.get("code", "RUNTIME_DRIFT") for item in outcome.reasons],
+            risk_band=assessment.risk_band if assessment else None,
+            now=now,
+        )
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="RuntimeDriftDetected",
+            actor=_actor(principal),
+            payload={
+                "status": outcome.status,
+                "reasons": [item.get("code") for item in outcome.reasons],
+            },
+        )
+
+    async def _open_reconciliation_case(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        *,
+        codes: list[str],
+        risk_band: str | None,
+        now: datetime,
+    ) -> WorkflowCaseModel:
+        reason_codes = list(dict.fromkeys(["RUNTIME_DRIFT", *[code for code in codes if code]]))
+        open_case = await self.open_case(principal, system.id)
+        if open_case is None:
+            open_case = WorkflowCaseModel(
+                id=new_id("case"),
+                tenant_id=principal.tenant_id,
+                system_id=system.id,
+                decision_id=None,
+                snapshot_id=None,
+                case_type="RECONCILIATION",
+                status="OPEN",
+                risk_band=risk_band,
+                reason_codes=reason_codes,
+                opened_at=now,
+                due_at=compute_due_at(now, risk_band),
+                closed_at=None,
+            )
+            self.session.add(open_case)
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="WorkflowCaseOpened",
+                actor=_actor(principal),
+                payload={
+                    "caseId": open_case.id,
+                    "reasonCodes": reason_codes,
+                    "dueAt": open_case.due_at.isoformat(),
+                    "caseType": "RECONCILIATION",
+                },
+            )
+            return open_case
+        open_case.case_type = "RECONCILIATION"
+        open_case.reason_codes = list(dict.fromkeys([*(open_case.reason_codes or []), *reason_codes]))
+        if risk_band:
+            open_case.risk_band = risk_band
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="WorkflowCaseUpdated",
+            actor=_actor(principal),
+            payload={
+                "caseId": open_case.id,
+                "reasonCodes": open_case.reason_codes,
+                "caseType": "RECONCILIATION",
+            },
+        )
+        return open_case
+
+    async def _reconcile_now(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        *,
+        observation: RuntimeObservationModel | None,
+        now: datetime,
+        assessment: RiskAssessmentModel | None,
+    ) -> tuple[ReconciliationOutcome, ReconciliationResultModel]:
+        allow_snapshot = await self.latest_allow_snapshot(principal, system)
+        desired = desired_from_snapshot(
+            allow_snapshot,
+            current_version_id=system.current_version_id,
+            environment=system.environment,
+        )
+        high_risk = bool(assessment and assessment.risk_band in {"HIGH", "CRITICAL"})
+        outcome = reconcile(
+            desired=desired,
+            observed=_observed_from_row(observation),
+            now=now,
+            max_age_seconds=max(0, int(self.settings.observation_max_age_seconds)),
+            high_risk=high_risk,
+        )
+        row = ReconciliationResultModel(
+            id=new_id("recon"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            observation_id=observation.id if observation is not None else None,
+            status=outcome.status,
+            reasons=outcome.reasons,
+            desired=outcome.desired,
+            observed=outcome.observed,
+            reconciled_at=now,
+        )
+        self.session.add(row)
+        return outcome, row
+
     async def _open_incident_case(
         self,
         principal: Principal,
@@ -1860,6 +2143,20 @@ def _approval_map(rows: list[ApprovalModel]) -> dict[str, bool]:
     for row in rows:
         latest[row.function] = row
     return {function: row.approved for function, row in latest.items()}
+
+
+def _observed_from_row(row: RuntimeObservationModel | None) -> ObservedState | None:
+    if row is None:
+        return None
+    return ObservedState(
+        running=bool(row.running),
+        asset_version_id=row.bound_version_id,
+        environment=row.environment,
+        cloud=row.cloud,
+        region=row.region,
+        fingerprint=row.fingerprint,
+        observed_at=row.observed_at,
+    )
 
 
 def _status_after_assessment(band: str, confidence: float) -> str:
