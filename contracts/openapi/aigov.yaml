@@ -1,13 +1,13 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.5.0
+  version: 0.6.0
   description: |
-    Slice 5 contract: AI system registry, deterministic risk, hashed evidence,
+    Slice 6 contract: AI system registry, deterministic risk, hashed evidence,
     fail-closed deployment gate, immutable snapshots, short-lived authorization,
     workflow cases with SLA clocks, time-bounded exceptions, findings, incidents,
-    and runtime revocation. An open incident is a non-waivable RUNTIME_INCIDENT
-    and immediately invalidates live deployment authorization.
+    runtime revocation, and agent action/resource authorization. An undeclared
+    tool cannot act; an open incident immediately invalidates action tokens.
   license:
     name: Apache-2.0
 servers:
@@ -23,6 +23,7 @@ tags:
   - name: Authorization
   - name: Workflow
   - name: Findings
+  - name: Agents
 security:
   - bearerAuth: []
 paths:
@@ -471,6 +472,114 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/capabilities:
+    post:
+      tags: [Agents]
+      summary: Declare a version-bound agent capability (action + resource pattern)
+      operationId: declareCapability
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapabilityRequest"
+      responses:
+        "201":
+          description: Capability declared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/capabilities/{capabilityId}/approve:
+    post:
+      tags: [Agents]
+      summary: Approve a privileged capability (reviewer, segregation of duties)
+      operationId: approveCapability
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/capabilityId"
+      responses:
+        "200":
+          description: Capability approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/actions/authorize:
+    post:
+      tags: [Agents]
+      summary: Authorize an agent action against a resource (ALLOW or DENY)
+      operationId: authorizeAction
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionAuthorizeRequest"
+      responses:
+        "200":
+          description: Action decision; ALLOW mints a short-lived action token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionDecision"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/action-authorizations/{actionAuthorizationId}/verify:
+    post:
+      tags: [Agents]
+      summary: Verify an action authorization token
+      operationId: verifyActionAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/actionAuthorizationId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizationVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAuthorizationVerify"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/action-authorizations/{actionAuthorizationId}/revoke:
+    post:
+      tags: [Agents]
+      summary: Revoke an action authorization immediately
+      operationId: revokeActionAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/actionAuthorizationId"
+      responses:
+        "200":
+          description: Action authorization is no longer valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAuthorization"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/ai-systems/{systemId}/versions:
     post:
       tags: [AI Systems]
@@ -520,6 +629,18 @@ components:
         type: string
     incidentId:
       name: incidentId
+      in: path
+      required: true
+      schema:
+        type: string
+    capabilityId:
+      name: capabilityId
+      in: path
+      required: true
+      schema:
+        type: string
+    actionAuthorizationId:
+      name: actionAuthorizationId
       in: path
       required: true
       schema:
@@ -882,6 +1003,14 @@ components:
             $ref: "#/components/schemas/IncidentRecord"
         latestIncident:
           $ref: "#/components/schemas/IncidentRecord"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityRecord"
+        latestActionDecision:
+          $ref: "#/components/schemas/ActionDecision"
+        latestActionAuthorization:
+          $ref: "#/components/schemas/ActionAuthorization"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -1261,6 +1390,149 @@ components:
         resolvedAt:
           type: string
           format: date-time
+    CapabilityRequest:
+      type: object
+      required: [action, resourcePattern]
+      properties:
+        action:
+          type: string
+        resourcePattern:
+          type: string
+        maxAmount:
+          type: number
+        requiresApproval:
+          type: boolean
+          default: false
+    CapabilityRecord:
+      type: object
+      required: [id, systemId, boundVersionId, action, resourcePattern, requiresApproval, approved, declaredBy, declaredAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        boundVersionId:
+          type: string
+        action:
+          type: string
+        resourcePattern:
+          type: string
+        maxAmount:
+          type: number
+        requiresApproval:
+          type: boolean
+        approved:
+          type: boolean
+        declaredBy:
+          type: string
+        approvedBy:
+          type: string
+        declaredAt:
+          type: string
+          format: date-time
+        approvedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+    ActionAuthorizeRequest:
+      type: object
+      required: [action, resource]
+      properties:
+        action:
+          type: string
+        resource:
+          type: string
+        amount:
+          type: number
+    ActionDecision:
+      type: object
+      required: [id, systemId, outcome, action, resource, fingerprint, decidedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        outcome:
+          type: string
+          enum: [ALLOW, DENY]
+        action:
+          type: string
+        resource:
+          type: string
+        amount:
+          type: number
+        capabilityId:
+          type: string
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyReason"
+        requiredActions:
+          type: array
+          items:
+            type: string
+        policyBundle:
+          type: string
+        policyDigest:
+          type: string
+        inputDigest:
+          type: string
+        fingerprint:
+          type: string
+        authorizationId:
+          type: string
+        decidedAt:
+          type: string
+          format: date-time
+    ActionAuthorization:
+      type: object
+      required: [id, systemId, decisionId, assetVersionId, action, resource, fingerprint, signature, issuedAt, expiresAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        decisionId:
+          type: string
+        assetVersionId:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        nonce:
+          type: string
+        fingerprint:
+          type: string
+        signature:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        consumedAt:
+          type: string
+          format: date-time
+    ActionAuthorizationVerify:
+      type: object
+      required: [outcome, authorization]
+      properties:
+        outcome:
+          type: string
+          enum: [ALLOW, DENY]
+        reasons:
+          type: array
+          items:
+            type: string
+        authorization:
+          $ref: "#/components/schemas/ActionAuthorization"
     AuditEvent:
       type: object
       required:
