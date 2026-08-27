@@ -17,8 +17,10 @@ from aigov.api.schemas import (
     IncidentOut,
     PolicyDecisionOut,
     PolicyReasonOut,
+    ReconciliationOut,
     RiskAssessmentOut,
     RiskDriverOut,
+    RuntimeObservationOut,
     WorkflowCaseOut,
 )
 from aigov.application.governance import ActionResult, GateResult
@@ -39,7 +41,9 @@ from aigov.infrastructure.models import (
     GovernanceDecisionModel,
     IncidentModel,
     PolicyDecisionModel,
+    ReconciliationResultModel,
     RiskAssessmentModel,
+    RuntimeObservationModel,
     WorkflowCaseModel,
 )
 
@@ -331,6 +335,35 @@ def action_gate_out(result: ActionResult) -> ActionDecisionOut:
     )
 
 
+def observation_out(row: RuntimeObservationModel) -> RuntimeObservationOut:
+    return RuntimeObservationOut(
+        id=row.id,
+        systemId=row.system_id,
+        boundVersionId=row.bound_version_id,
+        environment=row.environment,
+        cloud=row.cloud,
+        region=row.region,
+        fingerprint=row.fingerprint,
+        running=row.running,
+        observedAt=row.observed_at,
+        recordedBy=row.recorded_by,
+        recordedAt=row.recorded_at,
+    )
+
+
+def reconciliation_out(row: ReconciliationResultModel) -> ReconciliationOut:
+    return ReconciliationOut(
+        id=row.id,
+        systemId=row.system_id,
+        observationId=row.observation_id,
+        status=row.status,
+        reasons=[PolicyReasonOut(**item) for item in row.reasons or []],
+        desired=row.desired or {},
+        observed=row.observed,
+        reconciledAt=row.reconciled_at,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
@@ -347,6 +380,8 @@ def system_360(
     capabilities: list[CapabilityModel] | None = None,
     action_decision: ActionDecisionModel | None = None,
     action_authorization: ActionAuthorizationModel | None = None,
+    observation: RuntimeObservationModel | None = None,
+    reconciliation: ReconciliationResultModel | None = None,
 ) -> AISystem360Out:
     case_items = [case_out(row) for row in cases or []]
     incident_items = [incident_out(row) for row in incidents or []]
@@ -400,4 +435,6 @@ def system_360(
         latestActionAuthorization=(
             action_authorization_out(action_authorization) if action_authorization else None
         ),
+        latestObservation=observation_out(observation) if observation else None,
+        latestReconciliation=reconciliation_out(reconciliation) if reconciliation else None,
     )
