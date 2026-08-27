@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from aigov.domains.authorization.service import (
+    build_action_snapshot_parts,
     build_snapshot_parts,
     evaluate_authorization,
     governance_fingerprint,
@@ -33,6 +34,27 @@ def test_fingerprint_is_stable_and_version_sensitive() -> None:
     )
     assert "incidentDigest" in first
     assert governance_fingerprint(with_incident) != governance_fingerprint(first)
+    action_first = build_action_snapshot_parts(
+        asset_version_id="ver_1",
+        action="payments.refund",
+        resource="account:retail-123",
+        amount=50,
+        capability={"action": "payments.refund", "resource_match": True},
+        deploy_authorized=True,
+        policy_bundle="agent-actions@0.1.0",
+        policy_digest="sha256:policy",
+    )
+    action_changed = build_action_snapshot_parts(
+        asset_version_id="ver_1",
+        action="payments.refund",
+        resource="account:wholesale-1",
+        amount=50,
+        capability={"action": "payments.refund", "resource_match": False},
+        deploy_authorized=True,
+        policy_bundle="agent-actions@0.1.0",
+        policy_digest="sha256:policy",
+    )
+    assert governance_fingerprint(action_first) != governance_fingerprint(action_changed)
 
 
 def test_hmac_round_trip_and_tamper() -> None:
