@@ -7,28 +7,33 @@ default outcome := "ALLOW"
 violation[{"code": "MISSING_SECURITY_APPROVAL", "severity": "HIGH", "message": "security approval required for HIGH or CRITICAL risk AI systems"}] {
 	high_risk
 	not input.approvals.security
+	not waived("MISSING_SECURITY_APPROVAL")
 }
 
 violation[{"code": "MISSING_PRIVACY_APPROVAL", "severity": "HIGH", "message": "privacy approval required for PII or PCI processing"}] {
 	sensitive_data
 	not input.approvals.privacy
+	not waived("MISSING_PRIVACY_APPROVAL")
 }
 
 violation[{"code": "MISSING_HUMAN_OVERSIGHT", "severity": "HIGH", "message": "autonomous systems require human oversight controls"}] {
 	input.asset.autonomy_level == "AUTONOMOUS"
 	count(object.get(input.human_oversight, "controls", [])) == 0
+	not waived("MISSING_HUMAN_OVERSIGHT")
 }
 
 violation[{"code": "MISSING_RISK_APPROVAL", "severity": "HIGH", "message": "risk approval required for HIGH or CRITICAL customer-decision systems"}] {
 	high_risk
 	input.asset.uses_customer_decision == true
 	not input.approvals.risk
+	not waived("MISSING_RISK_APPROVAL")
 }
 
 violation[{"code": "MISSING_REQUIRED_EVIDENCE", "severity": "HIGH", "message": "unknown evidence cannot satisfy a mandatory control"}] {
 	control := input.evidence.controls[_]
 	control.required == true
 	control.status == "UNKNOWN"
+	not waived("MISSING_REQUIRED_EVIDENCE")
 }
 
 violation[{"code": "EVIDENCE_HASH_FAILURE", "severity": "HIGH", "message": "evidence hash verification failed"}] {
@@ -40,15 +45,18 @@ violation[{"code": "EVIDENCE_HASH_FAILURE", "severity": "HIGH", "message": "evid
 violation[{"code": "STALE_EVIDENCE", "severity": "HIGH", "message": "stale evidence cannot satisfy a HIGH or CRITICAL control"}] {
 	high_risk
 	stale_required
+	not waived("STALE_EVIDENCE")
 }
 
 violation[{"code": "STALE_EVIDENCE", "severity": "MEDIUM", "message": "evidence is stale relative to the control freshness policy"}] {
 	not high_risk
 	input.evidence.stale == true
+	not waived("STALE_EVIDENCE")
 }
 
 violation[{"code": "LOW_CONFIDENCE", "severity": "MEDIUM", "message": "risk confidence is below the automated-gate threshold"}] {
 	input.risk.confidence < 0.7
+	not waived("LOW_CONFIDENCE")
 }
 
 violation[{"code": "MISSING_ASSESSMENT", "severity": "HIGH", "message": "deployment gate requires a current risk assessment"}] {
@@ -63,6 +71,20 @@ stale_required {
 
 stale_required {
 	input.evidence.stale == true
+}
+
+non_waivable := {
+	"EVIDENCE_HASH_FAILURE": true,
+	"MISSING_ASSESSMENT": true,
+	"POLICY_ENGINE_UNAVAILABLE": true,
+}
+
+waived(code) {
+	not non_waivable[code]
+	exc := input.exceptions[_]
+	exc.violation_code == code
+	exc.status == "GRANTED"
+	exc.expired == false
 }
 
 high_risk {
