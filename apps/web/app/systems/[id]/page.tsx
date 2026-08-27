@@ -10,6 +10,7 @@ const NON_WAIVABLE = new Set([
   "EVIDENCE_HASH_FAILURE",
   "MISSING_ASSESSMENT",
   "POLICY_ENGINE_UNAVAILABLE",
+  "RUNTIME_INCIDENT",
 ]);
 
 const SAMPLES: Record<string, { filename: string; content: string }> = {
@@ -493,6 +494,125 @@ export default function System360Page() {
                       </button>
                     ) : null}
                   </div>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Findings</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            HIGH and CRITICAL findings auto-promote to an incident, revoke live authorization, and
+            block the gate with a non-waivable <span className="font-mono">RUNTIME_INCIDENT</span>.
+            MEDIUM and LOW stay open until a reviewer promotes or dismisses them.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              className="border border-carmine/40 px-3 py-1 font-mono text-[11px] uppercase text-carmine"
+              disabled={busy !== null}
+              onClick={() =>
+                run("finding-critical", () =>
+                  api.recordFinding(id, {
+                    findingType: "EVAL_REGRESSION",
+                    severity: "CRITICAL",
+                    summary: "Holdout recall dropped below the production floor.",
+                    detector: "eval-monitor",
+                  }),
+                )
+              }
+            >
+              Record CRITICAL eval regression
+            </button>
+            <button
+              className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+              disabled={busy !== null}
+              onClick={() =>
+                run("finding-medium", () =>
+                  api.recordFinding(id, {
+                    findingType: "DATA_DRIFT",
+                    severity: "MEDIUM",
+                    summary: "Feature distribution shifted on the live scoring window.",
+                    detector: "drift-monitor",
+                  }),
+                )
+              }
+            >
+              Record MEDIUM data drift
+            </button>
+          </div>
+          <ul className="mt-4 space-y-2">
+            {(data.findings ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No findings recorded.</li>
+            ) : (
+              data.findings.map((item) => (
+                <li key={item.id} className="border border-rule px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs">
+                      {item.severity} · {item.findingType}
+                    </p>
+                    <span className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(item.status)}`}>
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-navy/70">{item.summary}</p>
+                  <p className="font-mono text-[11px] text-navy/50">
+                    {item.detector} · bound {item.boundVersionId}
+                  </p>
+                  {item.status === "OPEN" ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        className="border border-ink px-2 py-1 font-mono text-[11px] uppercase"
+                        disabled={busy !== null}
+                        onClick={() => run(`promote-${item.id}`, () => api.promoteFinding(id, item.id))}
+                      >
+                        Promote
+                      </button>
+                      <button
+                        className="border border-rule px-2 py-1 font-mono text-[11px] uppercase"
+                        disabled={busy !== null}
+                        onClick={() => run(`dismiss-${item.id}`, () => api.dismissFinding(id, item.id))}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+
+        <div className="border border-rule bg-panel p-5">
+          <h2 className="font-serif text-2xl">Incidents</h2>
+          <p className="mt-1 text-sm text-navy/60">
+            Resolving an incident does not mint a new token. Re-evaluate the deployment gate after
+            containment.
+          </p>
+          <ul className="mt-4 space-y-2">
+            {(data.incidents ?? []).length === 0 ? (
+              <li className="text-sm text-navy/60">No incidents opened.</li>
+            ) : (
+              data.incidents.map((item) => (
+                <li key={item.id} className="border border-rule px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs">{item.title}</p>
+                    <span className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(item.status)}`}>
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-navy/70">{item.summary}</p>
+                  {item.status === "OPEN" ? (
+                    <button
+                      className="mt-2 border border-ink px-2 py-1 font-mono text-[11px] uppercase"
+                      disabled={busy !== null}
+                      onClick={() => run(`resolve-${item.id}`, () => api.resolveIncident(id, item.id))}
+                    >
+                      Resolve
+                    </button>
+                  ) : null}
                 </li>
               ))
             )}
