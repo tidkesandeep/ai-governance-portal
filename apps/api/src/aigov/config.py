@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     evidence_dir: str = "./data/evidence"
     evidence_max_bytes: int = 512000
     collector_version: str = "evidence-collector@0.2.0"
+    authorization_secret: str = "dev-only-authorization-secret"
+    authorization_ttl_seconds: int = 900
 
     @property
     def cors_origin_list(self) -> list[str]:
