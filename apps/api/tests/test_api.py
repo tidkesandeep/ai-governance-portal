@@ -103,6 +103,11 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     assert decision["inputDigest"].startswith("sha256:")
     assert decision["fingerprint"].startswith("sha256:")
     assert decision.get("authorizationId") is None
+    blocked_view = client.get(f"/v1/ai-systems/{system_id}", headers=auth("demo"))
+    case = blocked_view.json()["latestCase"]
+    assert case["status"] == "OPEN"
+    assert case["slaStatus"] == "ON_TRACK"
+    assert "MISSING_PRIVACY_APPROVAL" in case["reasonCodes"]
 
     sod = client.post(
         f"/v1/ai-systems/{system_id}/approvals",
@@ -147,6 +152,7 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     view = client.get(f"/v1/ai-systems/{system_id}", headers=auth("demo"))
     assert view.json()["latestSnapshot"]["fingerprint"] == allowed.json()["fingerprint"]
     assert view.json()["latestAuthorization"]["id"] == allowed.json()["authorizationId"]
+    assert view.json()["latestCase"]["status"] == "CLOSED"
 
     events = client.get(f"/v1/ai-systems/{system_id}/audit-events", headers=auth("demo"))
     assert events.status_code == 200
@@ -155,6 +161,8 @@ def test_register_assess_gate_block_then_allow(client: TestClient) -> None:
     assert "RiskAssessmentCompleted" in types
     assert "DeploymentGateEvaluated" in types
     assert "DeploymentAuthorizationIssued" in types
+    assert "WorkflowCaseOpened" in types
+    assert "WorkflowCaseClosed" in types
     hashes = [item["hash"] for item in events.json()["items"]]
     assert all(item.startswith("sha256:") for item in hashes)
     # hash chain: each event commits to the previous hash
@@ -360,6 +368,93 @@ def test_zero_ttl_authorization_expires_immediately(tmp_path, monkeypatch) -> No
         assert denied.json()["outcome"] == "DENY"
         assert "EXPIRED" in denied.json()["reasons"]
     get_settings.cache_clear()
+
+
+def test_exception_waives_missing_evidence_then_revoke_blocks(client: TestClient) -> None:
+    created = client.post("/v1/ai-systems", json=FRAUD, headers=auth("demo"))
+    system_id = created.json()["system"]["id"]
+    client.post(f"/v1/ai-systems/{system_id}/assessments", headers=auth("demo"))
+    for function in ("privacy", "security", "risk"):
+        client.post(
+            f"/v1/ai-systems/{system_id}/approvals",
+            json={"function": function, "approved": True},
+            headers=auth("demo-reviewer"),
+        )
+    blocked = client.post(
+        f"/v1/ai-systems/{system_id}/deployments/gate",
+        json={},
+        headers=auth("demo"),
+    )
+    assert blocked.json()["outcome"] == "BLOCK"
+    case = client.get(f"/v1/ai-systems/{system_id}", headers=auth("demo")).json()["latestCase"]
+    assert case["status"] == "OPEN"
+    assert case["slaStatus"] == "ON_TRACK"
+
+    refused = client.post(
+        f"/v1/ai-systems/{system_id}/exceptions",
+        json={
+            "violationCode": "EVIDENCE_HASH_FAILURE",
+            "justification": "cannot waive a failed digest",
+        },
+        headers=auth("demo"),
+    )
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "EXCEPTION_NOT_WAIVABLE"
+
+    requested = client.post(
+        f"/v1/ai-systems/{system_id}/exceptions",
+        json={
+            "violationCode": "MISSING_REQUIRED_EVIDENCE",
+            "justification": "hotfix window while evaluation is refreshed",
+        },
+        headers=auth("demo"),
+    )
+    assert requested.status_code == 201, requested.text
+    exception_id = requested.json()["exceptions"][0]["id"]
+    assert requested.json()["exceptions"][0]["status"] == "REQUESTED"
+
+    sod = client.post(
+        f"/v1/ai-systems/{system_id}/exceptions/{exception_id}/grant",
+        headers=auth("demo"),
+    )
+    assert sod.status_code == 409
+    assert sod.json()["code"] == "SOD_VIOLATION"
+
+    granted = client.post(
+        f"/v1/ai-systems/{system_id}/exceptions/{exception_id}/grant",
+        headers=auth("demo-reviewer"),
+    )
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["exceptions"][0]["status"] == "GRANTED"
+
+    allowed = client.post(
+        f"/v1/ai-systems/{system_id}/deployments/gate",
+        json={},
+        headers=auth("demo"),
+    )
+    assert allowed.json()["outcome"] == "ALLOW"
+    assert allowed.json()["authorizationId"]
+    view = client.get(f"/v1/ai-systems/{system_id}", headers=auth("demo"))
+    snapshot = view.json()["latestSnapshot"]
+    assert "exceptionDigest" in snapshot["snapshot"]
+
+    revoked = client.post(
+        f"/v1/ai-systems/{system_id}/exceptions/{exception_id}/revoke",
+        headers=auth("demo-reviewer"),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["exceptions"][0]["status"] == "REVOKED"
+    assert revoked.json()["latestAuthorization"]["revokedAt"]
+
+    blocked_again = client.post(
+        f"/v1/ai-systems/{system_id}/deployments/gate",
+        json={},
+        headers=auth("demo"),
+    )
+    assert blocked_again.json()["outcome"] == "BLOCK"
+    assert "MISSING_REQUIRED_EVIDENCE" in {
+        reason["code"] for reason in blocked_again.json()["reasons"]
+    }
 
 
 def test_unauthorized(client: TestClient) -> None:
