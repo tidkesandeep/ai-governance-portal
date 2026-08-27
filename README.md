@@ -1,8 +1,8 @@
 # AI Governance Control Plane
 
-Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–7** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence, an OPA-aligned deployment gate, immutable decision snapshots, short-lived authorization, workflow cases with SLA clocks, time-bounded exceptions, findings that promote to incidents and revoke live authorization, agent action/resource authorization, desired versus observed reconciliation, append-only audit events, and a thin Next.js portal.
+Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–8** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence, an OPA-aligned deployment gate, immutable decision snapshots, short-lived authorization, workflow cases with SLA clocks, time-bounded exceptions, findings that promote to incidents and revoke live authorization, agent action/resource authorization, desired versus observed reconciliation, OIDC bearer identity, append-only audit events, and a thin Next.js portal.
 
-The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy or keep operating **or act**, whether the authorized version is what is actually running, and what evidence/decision snapshot proves that.
+The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy or keep operating **or act**, whether the authorized version is what is actually running, and what evidence/decision snapshot proves that. Identity is bound to the bearer token.
 
 ## Current slice
 
@@ -25,7 +25,8 @@ The portal is not a model registry. It exists to answer: what AI exists, what ri
 | Findings, incidents, and runtime revocation | Yes |
 | Agent action and resource authorization | Yes |
 | Desired versus observed reconciliation | Yes |
-| Cloud adapters, Kafka, OIDC | Later slices |
+| OIDC bearer identity (`GET /v1/me`) | Yes |
+| Alembic, Kafka, GitHub App, cloud adapters | Later slices |
 
 ## Quick start
 
@@ -70,6 +71,7 @@ The header switch on the portal selects the first two.
 14. Record a **MEDIUM** data-drift finding → authorization stays valid until a reviewer **Promote**s it
 15. Or register the **refund agent sample**, attach evidence, gate **ALLOW**, declare `payments.refund` on `account:retail-*`, reviewer **Approve**, then authorize a retail refund → **ALLOW**. Wholesale or undeclared actions **DENY**. A CRITICAL finding revokes the action token.
 16. After a fraud-model **ALLOW**, **Report in-sync** → `IN_SYNC`. **Report drifted version** → tokens revoked, status **BLOCKED**, gate **BLOCK** `RUNTIME_DRIFT`. Report in-sync again → still **BLOCKED** with no new token until you re-evaluate the gate.
+17. Header shows the bound principal from `GET /v1/me` (demo engineer vs reviewer). Production deploys set `AIGOV_DEMO_AUTH=false` and `AIGOV_OIDC_ISSUER` / `AIGOV_OIDC_AUDIENCE`; tenant and roles then come only from the JWT.
 
 Optional: load the internal analytics sample and gate with “simulate stale evidence” to see **REVIEW**. Attach an evaluation dated 2020 to a HIGH system to see **STALE** block.
 
