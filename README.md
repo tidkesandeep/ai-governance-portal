@@ -1,6 +1,6 @@
 # AI Governance Control Plane
 
-Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–1** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, an OPA-aligned deployment gate, append-only audit events, and a thin Next.js portal.
+Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–2** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence with freshness and version binding, an OPA-aligned deployment gate, append-only audit events, and a thin Next.js portal.
 
 The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy, and what evidence/decision snapshot proves that.
 
@@ -17,7 +17,8 @@ The portal is not a model registry. It exists to answer: what AI exists, what ri
 | Segregation of duties on approvals | Yes |
 | Tenant isolation | Yes |
 | Thin UI: inventory, register, System 360, Why blocked? | Yes |
-| Cloud adapters, Kafka, evidence store, agent authz | Later slices |
+| Hashed evidence, freshness, version binding | Yes |
+| Cloud adapters, Kafka, agent authz | Later slices |
 
 ## Quick start
 
@@ -48,12 +49,15 @@ The header switch on the portal selects the first two.
 
 1. Register → **Load fraud model sample** → create DRAFT
 2. Run assessment → expect **HIGH**
-3. Evaluate production gate → **BLOCK** with `MISSING_PRIVACY_APPROVAL` (and related HIGH reasons)
+3. Evaluate production gate → **BLOCK** with missing approvals
 4. Switch actor to reviewer → record privacy, security, and risk approvals
-5. Evaluate gate again → **ALLOW**
-6. Confirm the audit trail hash-chains
+5. Gate again → still **BLOCK** (`MISSING_REQUIRED_EVIDENCE`)
+6. Attach model card, evaluation run, and fairness evaluation
+7. Gate → **ALLOW**
+8. Cut a new asset version → controls return to **UNKNOWN**; prior evidence cannot satisfy vN+1
+9. Confirm the audit trail hash-chains
 
-Optional: load the internal analytics sample and gate with “simulate stale evidence” to see **REVIEW**.
+Optional: load the internal analytics sample and gate with “simulate stale evidence” to see **REVIEW**. Attach an evaluation dated 2020 to a HIGH system to see **STALE** block.
 
 ## Layout
 
