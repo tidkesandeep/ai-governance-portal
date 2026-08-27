@@ -1,6 +1,6 @@
 # AI Governance Control Plane
 
-Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–2** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence with freshness and version binding, an OPA-aligned deployment gate, append-only audit events, and a thin Next.js portal.
+Centralized governance control plane for predictive ML, GenAI applications, and AI agents. This repository implements **Slice 0–3** of the architecture: contracts, a FastAPI modular monolith, deterministic risk scoring, hashed evidence with freshness and version binding, an OPA-aligned deployment gate, immutable decision snapshots, short-lived deployment authorization, append-only audit events, and a thin Next.js portal.
 
 The portal is not a model registry. It exists to answer: what AI exists, what risk and controls apply, whether it is authorized to deploy, and what evidence/decision snapshot proves that.
 
@@ -18,6 +18,8 @@ The portal is not a model registry. It exists to answer: what AI exists, what ri
 | Tenant isolation | Yes |
 | Thin UI: inventory, register, System 360, Why blocked? | Yes |
 | Hashed evidence, freshness, version binding | Yes |
+| Immutable governance snapshots | Yes |
+| Short-lived, revocable HMAC deployment authorization | Yes |
 | Cloud adapters, Kafka, agent authz | Later slices |
 
 ## Quick start
@@ -53,9 +55,10 @@ The header switch on the portal selects the first two.
 4. Switch actor to reviewer → record privacy, security, and risk approvals
 5. Gate again → still **BLOCK** (`MISSING_REQUIRED_EVIDENCE`)
 6. Attach model card, evaluation run, and fairness evaluation
-7. Gate → **ALLOW**
-8. Cut a new asset version → controls return to **UNKNOWN**; prior evidence cannot satisfy vN+1
-9. Confirm the audit trail hash-chains
+7. Gate → **ALLOW** and a short-lived deployment authorization is issued
+8. Verify the authorization → **ALLOW**; revoke or cut a version → verify returns **DENY**
+9. Cut a new asset version → controls return to **UNKNOWN**; prior evidence cannot satisfy vN+1
+10. Confirm the audit trail hash-chains
 
 Optional: load the internal analytics sample and gate with “simulate stale evidence” to see **REVIEW**. Attach an evaluation dated 2020 to a HIGH system to see **STALE** block.
 
