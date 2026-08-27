@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="AI Governance Control Plane API",
-        version="0.6.0",
+        version="0.7.0",
         lifespan=lifespan,
     )
     app.add_middleware(
