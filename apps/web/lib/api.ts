@@ -152,5 +152,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  bindRuntime: (
+    id: string,
+    body: { provider: string; resourceRef: string; region?: string; service?: string },
+  ) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/runtime-bindings`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  discoverRuntime: (id: string) =>
+    request<AISystem360>(`/v1/ai-systems/${id}/runtime/discover`, { method: "POST" }),
+  collectRuntime: (id: string, scenario: "in_sync" | "drift" | "stopped" = "in_sync") =>
+    request<AISystem360>(`/v1/ai-systems/${id}/runtime/collect`, {
+      method: "POST",
+      body: JSON.stringify({ scenario }),
+    }),
+  enforceRuntime: (id: string, action: "CONTAIN" | "PERMIT" = "CONTAIN") =>
+    request<AISystem360>(`/v1/ai-systems/${id}/runtime/enforce`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
