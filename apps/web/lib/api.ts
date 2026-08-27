@@ -3,6 +3,8 @@
 import type {
   AISystem360,
   AuditEvent,
+  AuthorizationVerify,
+  DeploymentAuthorization,
   PolicyDecision,
   Registration,
   RiskAssessment,
@@ -67,5 +69,15 @@ export const api = {
     }),
   cutVersion: (id: string) =>
     request<AISystem360>(`/v1/ai-systems/${id}/versions`, { method: "POST" }),
+  verifyAuthorization: (id: string, authorizationId: string, signature?: string, consume = false) =>
+    request<AuthorizationVerify>(`/v1/ai-systems/${id}/authorizations/${authorizationId}/verify`, {
+      method: "POST",
+      body: JSON.stringify({ signature: signature ?? null, consume }),
+    }),
+  revokeAuthorization: (id: string, authorizationId: string) =>
+    request<DeploymentAuthorization>(
+      `/v1/ai-systems/${id}/authorizations/${authorizationId}/revoke`,
+      { method: "POST" },
+    ),
   audit: (id: string) => request<{ items: AuditEvent[] }>(`/v1/ai-systems/${id}/audit-events`),
 };
