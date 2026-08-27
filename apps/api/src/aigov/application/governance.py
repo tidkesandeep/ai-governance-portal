@@ -10,9 +10,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aigov.config import Settings, get_settings
+from aigov.domains.agents.service import (
+    CapabilityRuleError,
+    capability_to_policy_document,
+    select_capability,
+    validate_capability,
+)
 from aigov.domains.audit.service import AuditLog
 from aigov.domains.authorization.service import (
     AuthorizationCheck,
+    build_action_snapshot_parts,
     build_snapshot_parts,
     evaluate_authorization,
     governance_fingerprint,
@@ -47,8 +54,11 @@ from aigov.domains.workflow.service import (
 )
 from aigov.infrastructure.ids import new_id, utcnow
 from aigov.infrastructure.models import (
+    ActionAuthorizationModel,
+    ActionDecisionModel,
     AISystemModel,
     ApprovalModel,
+    CapabilityModel,
     DeploymentAuthorizationModel,
     EvidenceArtifactModel,
     ExceptionModel,
@@ -92,6 +102,13 @@ class FindingRejectedError(Exception):
         self.code = code
 
 
+class CapabilityRejectedError(Exception):
+    def __init__(self, detail: str, code: str = "CAPABILITY_REJECTED") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
 APPROVER_ROLES = {
     "privacy": ("privacy",),
     "security": ("security",),
@@ -100,6 +117,7 @@ APPROVER_ROLES = {
 }
 EXCEPTION_GRANT_ROLES = ("privacy", "security", "risk_reviewer")
 FINDING_REVIEW_ROLES = EXCEPTION_GRANT_ROLES
+CAPABILITY_APPROVE_ROLES = EXCEPTION_GRANT_ROLES
 
 
 @dataclass
@@ -107,6 +125,12 @@ class GateResult:
     decision: PolicyDecisionModel
     snapshot: GovernanceDecisionModel
     authorization: DeploymentAuthorizationModel | None
+
+
+@dataclass
+class ActionResult:
+    decision: ActionDecisionModel
+    authorization: ActionAuthorizationModel | None
 
 
 def _slug(name: str) -> str:
@@ -400,6 +424,75 @@ class GovernanceService:
         )
         if row is None:
             raise NotFoundError(incident_id)
+        return row
+
+    async def list_capabilities(
+        self, principal: Principal, system_id: str
+    ) -> list[CapabilityModel]:
+        result = await self.session.scalars(
+            select(CapabilityModel)
+            .where(
+                CapabilityModel.tenant_id == principal.tenant_id,
+                CapabilityModel.system_id == system_id,
+            )
+            .order_by(CapabilityModel.declared_at.desc())
+        )
+        return list(result)
+
+    async def get_capability(
+        self, principal: Principal, system_id: str, capability_id: str
+    ) -> CapabilityModel:
+        await self.get_system(principal, system_id)
+        row = await self.session.scalar(
+            select(CapabilityModel).where(
+                CapabilityModel.id == capability_id,
+                CapabilityModel.tenant_id == principal.tenant_id,
+                CapabilityModel.system_id == system_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError(capability_id)
+        return row
+
+    async def latest_action_decision(
+        self, principal: Principal, system_id: str
+    ) -> ActionDecisionModel | None:
+        return await self.session.scalar(
+            select(ActionDecisionModel)
+            .where(
+                ActionDecisionModel.tenant_id == principal.tenant_id,
+                ActionDecisionModel.system_id == system_id,
+            )
+            .order_by(ActionDecisionModel.decided_at.desc())
+            .limit(1)
+        )
+
+    async def latest_action_authorization(
+        self, principal: Principal, system_id: str
+    ) -> ActionAuthorizationModel | None:
+        return await self.session.scalar(
+            select(ActionAuthorizationModel)
+            .where(
+                ActionAuthorizationModel.tenant_id == principal.tenant_id,
+                ActionAuthorizationModel.system_id == system_id,
+            )
+            .order_by(ActionAuthorizationModel.issued_at.desc())
+            .limit(1)
+        )
+
+    async def get_action_authorization(
+        self, principal: Principal, system_id: str, authorization_id: str
+    ) -> ActionAuthorizationModel:
+        await self.get_system(principal, system_id)
+        row = await self.session.scalar(
+            select(ActionAuthorizationModel).where(
+                ActionAuthorizationModel.id == authorization_id,
+                ActionAuthorizationModel.tenant_id == principal.tenant_id,
+                ActionAuthorizationModel.system_id == system_id,
+            )
+        )
+        if row is None:
+            raise NotFoundError(authorization_id)
         return row
 
     async def assess(self, principal: Principal, system_id: str) -> RiskAssessmentModel:
@@ -1110,6 +1203,307 @@ class GovernanceService:
         await self.session.refresh(incident)
         return incident
 
+    async def declare_capability(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        action: str,
+        resource_pattern: str,
+        max_amount: float | None = None,
+        requires_approval: bool = False,
+    ) -> CapabilityModel:
+        system = await self.get_system(principal, system_id)
+        if system.system_type != "AGENT":
+            raise CapabilityRejectedError(
+                "only AGENT systems may declare capabilities",
+                "NOT_AN_AGENT",
+            )
+        try:
+            privileged = validate_capability(
+                action=action,
+                resource_pattern=resource_pattern,
+                max_amount=max_amount,
+                requires_approval=requires_approval or False,
+            )
+        except CapabilityRuleError as exc:
+            raise CapabilityRejectedError(exc.detail, exc.code) from exc
+        needs_approval = bool(requires_approval or privileged)
+        now = utcnow()
+        row = CapabilityModel(
+            id=new_id("cap"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            bound_version_id=system.current_version_id,
+            action=action,
+            resource_pattern=resource_pattern.strip(),
+            max_amount=max_amount,
+            requires_approval=needs_approval,
+            approved=not needs_approval,
+            declared_by=principal.actor_id,
+            approved_by=None if needs_approval else principal.actor_id,
+            declared_at=now,
+            approved_at=None if needs_approval else now,
+            revoked_at=None,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="CapabilityDeclared",
+            actor=_actor(principal),
+            payload={
+                "capabilityId": row.id,
+                "action": action,
+                "resourcePattern": row.resource_pattern,
+                "requiresApproval": needs_approval,
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def approve_capability(
+        self, principal: Principal, system_id: str, capability_id: str
+    ) -> CapabilityModel:
+        if not principal.has_role(*CAPABILITY_APPROVE_ROLES):
+            raise SegregationOfDutiesError("principal lacks reviewer role to approve capabilities")
+        row = await self.get_capability(principal, system_id, capability_id)
+        if principal.actor_id == row.declared_by:
+            raise SegregationOfDutiesError("declarer cannot approve their own capability")
+        if row.revoked_at is not None:
+            raise CapabilityRejectedError("capability has been revoked")
+        if not row.requires_approval:
+            raise CapabilityRejectedError("capability does not require approval")
+        if row.approved:
+            raise CapabilityRejectedError("capability is already approved")
+        now = utcnow()
+        row.approved = True
+        row.approved_by = principal.actor_id
+        row.approved_at = now
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system_id,
+            event_type="CapabilityApproved",
+            actor=_actor(principal),
+            payload={"capabilityId": row.id, "action": row.action},
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def authorize_action(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        action: str,
+        resource: str,
+        amount: float | None = None,
+    ) -> ActionResult:
+        system = await self.get_system(principal, system_id)
+        if amount is not None and amount < 0:
+            raise CapabilityRejectedError("amount cannot be negative")
+        now = utcnow()
+        snapshot = await self.latest_snapshot(principal, system_id)
+        incident_rows = await self.list_incidents(principal, system_id)
+        capabilities = await self.list_capabilities(principal, system_id)
+        match = select_capability(
+            capabilities,
+            action=action,
+            resource=resource,
+            version_id=system.current_version_id,
+        )
+        deploy_authorized = (
+            snapshot is not None
+            and snapshot.outcome == "ALLOW"
+            and snapshot.asset_version_id == system.current_version_id
+        )
+        document = {
+            "asset": {
+                "id": system.id,
+                "system_type": system.system_type,
+                "status": system.status,
+                "autonomy_level": system.autonomy_level,
+                "version_id": system.current_version_id,
+                "deploy_authorized": deploy_authorized,
+            },
+            "incidents": open_incidents_to_policy_document(incident_rows),
+            "request": {"action": action, "resource": resource, "amount": amount},
+            "capability": capability_to_policy_document(
+                match, current_version_id=system.current_version_id
+            ),
+        }
+        evaluation: PolicyEvaluation = await self.policy_engine.evaluate_action(document)
+        parts = build_action_snapshot_parts(
+            asset_version_id=system.current_version_id,
+            action=action,
+            resource=resource,
+            amount=amount,
+            capability=document["capability"],
+            deploy_authorized=deploy_authorized,
+            incidents=incident_fingerprint_records(incident_rows),
+            policy_bundle=evaluation.policy_bundle,
+            policy_digest=evaluation.policy_digest,
+        )
+        fingerprint = governance_fingerprint(parts)
+        row = ActionDecisionModel(
+            id=new_id("adec"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            outcome=evaluation.outcome,
+            action=action,
+            resource=resource,
+            amount=amount,
+            capability_id=match.capability.id if match.capability is not None else None,
+            reasons=[reason.__dict__ for reason in evaluation.reasons],
+            required_actions=evaluation.required_actions,
+            policy_bundle=evaluation.policy_bundle,
+            policy_digest=evaluation.policy_digest,
+            input_digest=_digest(document),
+            fingerprint=fingerprint,
+            decided_at=now,
+        )
+        self.session.add(row)
+        authorization: ActionAuthorizationModel | None = None
+        if evaluation.outcome == "ALLOW":
+            authorization = self._issue_action_authorization(
+                principal,
+                system,
+                row,
+                action=action,
+                resource=resource,
+                issued_at=now,
+            )
+            self.session.add(authorization)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="ActionAuthorizationEvaluated",
+            actor=_actor(principal),
+            payload={
+                "decisionId": row.id,
+                "outcome": evaluation.outcome,
+                "action": action,
+                "resource": resource,
+                "authorizationId": authorization.id if authorization else None,
+                "reasons": [reason.code for reason in evaluation.reasons],
+            },
+        )
+        if authorization is not None:
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="ActionAuthorizationIssued",
+                actor=_actor(principal),
+                payload={
+                    "authorizationId": authorization.id,
+                    "action": action,
+                    "expiresAt": authorization.expires_at.isoformat(),
+                },
+            )
+        await self.session.commit()
+        await self.session.refresh(row)
+        if authorization is not None:
+            await self.session.refresh(authorization)
+        return ActionResult(decision=row, authorization=authorization)
+
+    async def verify_action_authorization(
+        self,
+        principal: Principal,
+        system_id: str,
+        authorization_id: str,
+        *,
+        presented_signature: str | None = None,
+        consume: bool = False,
+    ) -> tuple[ActionAuthorizationModel, AuthorizationCheck]:
+        system = await self.get_system(principal, system_id)
+        row = await self.get_action_authorization(principal, system_id, authorization_id)
+        check = evaluate_authorization(
+            secret=self.settings.authorization_secret,
+            authorization_id=row.id,
+            fingerprint=row.fingerprint,
+            nonce=row.nonce,
+            expires_at=row.expires_at,
+            signature=row.signature,
+            presented_signature=presented_signature,
+            now=utcnow(),
+            revoked_at=row.revoked_at,
+            consumed_at=row.consumed_at,
+            bound_version_id=row.asset_version_id,
+            current_version_id=system.current_version_id,
+        )
+        if check.outcome == "ALLOW" and consume:
+            row.consumed_at = utcnow()
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="ActionAuthorizationVerified",
+            actor=_actor(principal),
+            payload={
+                "authorizationId": row.id,
+                "outcome": check.outcome,
+                "reasons": check.reasons,
+                "consumed": bool(consume and check.outcome == "ALLOW"),
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row, check
+
+    async def revoke_action_authorization(
+        self, principal: Principal, system_id: str, authorization_id: str
+    ) -> ActionAuthorizationModel:
+        row = await self.get_action_authorization(principal, system_id, authorization_id)
+        if row.revoked_at is None:
+            row.revoked_at = utcnow()
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system_id,
+                event_type="ActionAuthorizationRevoked",
+                actor=_actor(principal),
+                payload={"authorizationId": row.id, "fingerprint": row.fingerprint},
+            )
+            await self.session.commit()
+            await self.session.refresh(row)
+        return row
+
+    def _issue_action_authorization(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        decision: ActionDecisionModel,
+        *,
+        action: str,
+        resource: str,
+        issued_at: datetime,
+    ) -> ActionAuthorizationModel:
+        authorization_id = new_id("actz")
+        nonce = new_id("nce")
+        ttl = max(0, int(self.settings.action_authorization_ttl_seconds))
+        expires_at = issued_at + timedelta(seconds=ttl)
+        signature = sign_authorization(
+            secret=self.settings.authorization_secret,
+            authorization_id=authorization_id,
+            fingerprint=decision.fingerprint,
+            nonce=nonce,
+            expires_at=expires_at,
+        )
+        return ActionAuthorizationModel(
+            id=authorization_id,
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            decision_id=decision.id,
+            asset_version_id=system.current_version_id,
+            action=action,
+            resource=resource,
+            nonce=nonce,
+            fingerprint=decision.fingerprint,
+            signature=signature,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+
     async def _promote_to_incident(
         self,
         principal: Principal,
@@ -1273,6 +1667,31 @@ class GovernanceService:
                 tenant_id=principal.tenant_id,
                 aggregate_id=system.id,
                 event_type="DeploymentAuthorizationRevoked",
+                actor=_actor(principal),
+                payload={"authorizationIds": revoked_ids, "reason": reason},
+            )
+        await self._revoke_active_action_authorizations(principal, system, now, reason=reason)
+        return revoked_ids
+
+    async def _revoke_active_action_authorizations(
+        self, principal: Principal, system: AISystemModel, now: datetime, *, reason: str
+    ) -> list[str]:
+        result = await self.session.scalars(
+            select(ActionAuthorizationModel).where(
+                ActionAuthorizationModel.tenant_id == principal.tenant_id,
+                ActionAuthorizationModel.system_id == system.id,
+                ActionAuthorizationModel.revoked_at.is_(None),
+            )
+        )
+        revoked_ids: list[str] = []
+        for row in result:
+            row.revoked_at = now
+            revoked_ids.append(row.id)
+        if revoked_ids:
+            await self.audit.append(
+                tenant_id=principal.tenant_id,
+                aggregate_id=system.id,
+                event_type="ActionAuthorizationRevoked",
                 actor=_actor(principal),
                 payload={"authorizationIds": revoked_ids, "reason": reason},
             )
