@@ -333,3 +333,35 @@ class GitHubCheckModel(Base):
     html_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     decision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RuntimeBindingModel(Base):
+    __tablename__ = "runtime_bindings"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    service: Mapped[str] = mapped_column(String(64))
+    resource_ref: Mapped[str] = mapped_column(String(256))
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    account_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdapterRunModel(Base):
+    __tablename__ = "adapter_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    binding_id: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result: Mapped[dict] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
