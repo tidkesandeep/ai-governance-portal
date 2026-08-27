@@ -819,6 +819,142 @@ export default function System360Page() {
         </div>
       </section>
 
+      <section className="border border-rule bg-panel p-5">
+        <h2 className="font-serif text-2xl">Execution plane</h2>
+        <p className="mt-1 text-sm text-navy/60">
+          Discovery, collection, and enforcement run in cloud adapters behind ports. Domain logic
+          never imports AWS, Azure, or GCP SDKs. Default mode is fake so CI never calls a cloud.
+          Collecting a drifted version still revokes tokens and asks the adapter to CONTAIN.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() =>
+              run("bind-aws", () =>
+                api.bindRuntime(id, {
+                  provider: "aws",
+                  resourceRef: "fraud-endpoint",
+                  region: "us-east-1",
+                }),
+              )
+            }
+          >
+            Bind AWS SageMaker
+          </button>
+          <button
+            className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() =>
+              run("bind-azure", () =>
+                api.bindRuntime(id, {
+                  provider: "azure",
+                  resourceRef: "gpt4-deploy",
+                  region: "eastus",
+                }),
+              )
+            }
+          >
+            Bind Azure OpenAI
+          </button>
+          <button
+            className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() =>
+              run("bind-gcp", () =>
+                api.bindRuntime(id, {
+                  provider: "gcp",
+                  resourceRef: "fraud-ep",
+                  region: "us-central1",
+                }),
+              )
+            }
+          >
+            Bind Vertex AI
+          </button>
+          <button
+            className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() => run("discover", () => api.discoverRuntime(id))}
+          >
+            Discover
+          </button>
+          <button
+            className="border border-ink px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() => run("collect-sync", () => api.collectRuntime(id, "in_sync"))}
+          >
+            Collect in-sync
+          </button>
+          <button
+            className="border border-carmine/40 px-3 py-1 font-mono text-[11px] uppercase text-carmine"
+            disabled={busy !== null}
+            onClick={() => run("collect-drift", () => api.collectRuntime(id, "drift"))}
+          >
+            Collect drifted version
+          </button>
+          <button
+            className="border border-rule px-3 py-1 font-mono text-[11px] uppercase"
+            disabled={busy !== null}
+            onClick={() => run("enforce", () => api.enforceRuntime(id, "CONTAIN"))}
+          >
+            Enforce contain
+          </button>
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="border border-rule px-3 py-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-navy/50">Binding</p>
+            {data.runtimeBinding ? (
+              <>
+                <p className="mt-2 font-mono text-xs">
+                  {data.runtimeBinding.provider} · {data.runtimeBinding.service}
+                </p>
+                <p className="break-all font-mono text-[11px] text-navy/50">
+                  {data.runtimeBinding.resourceRef}
+                  {data.runtimeBinding.region ? ` · ${data.runtimeBinding.region}` : ""}
+                </p>
+                <span
+                  className={`mt-2 inline-block border px-2 py-0.5 font-mono text-[11px] ${bandClass(
+                    data.runtimeBinding.status,
+                  )}`}
+                >
+                  {data.runtimeBinding.status}
+                </span>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-navy/60">No runtime binding. Bind a cloud first.</p>
+            )}
+          </div>
+          <div className="border border-rule px-3 py-2">
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-navy/50">
+              Latest adapter run
+            </p>
+            {data.latestAdapterRun ? (
+              <>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <p className="font-mono text-xs">
+                    {data.latestAdapterRun.kind}
+                    {data.latestAdapterRun.action ? ` · ${data.latestAdapterRun.action}` : ""}
+                  </p>
+                  <span
+                    className={`border px-2 py-0.5 font-mono text-[11px] ${bandClass(
+                      data.latestAdapterRun.status,
+                    )}`}
+                  >
+                    {data.latestAdapterRun.status}
+                  </span>
+                </div>
+                <p className="mt-1 break-all font-mono text-[11px] text-navy/50">
+                  {String(data.latestAdapterRun.result.locator ?? data.latestAdapterRun.provider)}
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-navy/60">No adapter run recorded.</p>
+            )}
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="border border-rule bg-panel p-5">
           <h2 className="font-serif text-2xl">Capabilities</h2>
