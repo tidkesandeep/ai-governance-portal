@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -27,6 +27,7 @@ class AISystemModel(Base):
     status: Mapped[str] = mapped_column(String(64))
     registration: Mapped[dict] = mapped_column(JSON)
     human_oversight: Mapped[list] = mapped_column(JSON, default=list)
+    current_version_id: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -86,3 +87,22 @@ class AuditEventModel(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     hash: Mapped[str] = mapped_column(String(128))
     previous_event_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class EvidenceArtifactModel(Base):
+    __tablename__ = "evidence_artifacts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    bound_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    evidence_type: Mapped[str] = mapped_column(String(64))
+    filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(128))
+    uri: Mapped[str] = mapped_column(String(512))
+    sha256: Mapped[str] = mapped_column(String(128))
+    bytes_size: Mapped[int] = mapped_column(Integer)
+    collector_version: Mapped[str] = mapped_column(String(64))
+    verification_status: Mapped[str] = mapped_column(String(32))
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
