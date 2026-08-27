@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-POLICY_BUNDLE = "payments-baseline@0.4.0"
-POLICY_DIGEST = "sha256:slice5-payments-baseline-0.4.0"
+POLICY_BUNDLE = "payments-baseline@0.5.0"
+POLICY_DIGEST = "sha256:slice7-payments-baseline-0.5.0"
 
 NON_WAIVABLE = frozenset(
     {
@@ -12,6 +12,7 @@ NON_WAIVABLE = frozenset(
         "MISSING_ASSESSMENT",
         "POLICY_ENGINE_UNAVAILABLE",
         "RUNTIME_INCIDENT",
+        "RUNTIME_DRIFT",
     }
 )
 
@@ -43,6 +44,8 @@ ACTIONS = {
     "MISSING_REQUIRED_EVIDENCE": "attach required evidence for the current asset version",
     "EVIDENCE_HASH_FAILURE": "re-upload evidence; stored digest does not match bytes",
     "RUNTIME_INCIDENT": "resolve the open incident and re-evaluate the deployment gate",
+    "RUNTIME_DRIFT": "restore the authorized runtime version and re-evaluate the deployment gate",
+    "STALE_OBSERVATION": "refresh the runtime observation within the freshness window",
 }
 
 ACTION_BUNDLE = "agent-actions@0.1.0"
@@ -177,6 +180,33 @@ def evaluate_deployment_document(document: dict[str, Any]) -> PolicyEvaluation:
                 "an open runtime incident revokes deployment authorization",
             )
         )
+    reconciliation = document.get("reconciliation") or {}
+    recon_reasons = reconciliation.get("reasons") or []
+    high_drift = reconciliation.get("high_drift") is True or (
+        reconciliation.get("status") == "DRIFT"
+        and any((item or {}).get("severity") == "HIGH" for item in recon_reasons)
+    )
+    if high_drift:
+        reasons.append(
+            PolicyReason(
+                "RUNTIME_DRIFT",
+                "HIGH",
+                "observed runtime state does not match the authorized desired state",
+            )
+        )
+    for item in recon_reasons:
+        if (item or {}).get("code") == "STALE_OBSERVATION":
+            stale_severity = str((item or {}).get("severity") or "")
+            if stale_severity not in {"HIGH", "MEDIUM"}:
+                stale_severity = "HIGH" if high_risk else "MEDIUM"
+            reasons.append(
+                PolicyReason(
+                    "STALE_OBSERVATION",
+                    stale_severity,
+                    "runtime observation is stale relative to the freshness window",
+                )
+            )
+            break
 
     waived = _waived_codes(document)
     reasons = [reason for reason in reasons if reason.code not in waived]
