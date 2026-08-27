@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, DateTime, Float, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class AISystemModel(Base):
+    __tablename__ = "ai_systems"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    urn: Mapped[str] = mapped_column(String(255), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    system_type: Mapped[str] = mapped_column(String(64))
+    business_purpose: Mapped[str] = mapped_column(Text)
+    owner: Mapped[str] = mapped_column(String(200))
+    environment: Mapped[str] = mapped_column(String(32))
+    data_classification: Mapped[str] = mapped_column(String(32))
+    geography: Mapped[str] = mapped_column(String(64))
+    autonomy_level: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(64))
+    registration: Mapped[dict] = mapped_column(JSON)
+    human_oversight: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RiskAssessmentModel(Base):
+    __tablename__ = "risk_assessments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    score: Mapped[float] = mapped_column(Float)
+    risk_band: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float)
+    drivers: Mapped[list] = mapped_column(JSON)
+    hard_constraints: Mapped[list] = mapped_column(JSON)
+    missing_inputs: Mapped[list] = mapped_column(JSON)
+    engine_version: Mapped[str] = mapped_column(String(64))
+    assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ApprovalModel(Base):
+    __tablename__ = "approvals"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    function: Mapped[str] = mapped_column(String(32))
+    approved: Mapped[bool] = mapped_column(Boolean)
+    actor_id: Mapped[str] = mapped_column(String(64))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PolicyDecisionModel(Base):
+    __tablename__ = "policy_decisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    outcome: Mapped[str] = mapped_column(String(32))
+    policy_bundle: Mapped[str] = mapped_column(String(128))
+    reasons: Mapped[list] = mapped_column(JSON)
+    required_actions: Mapped[list] = mapped_column(JSON)
+    policy_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuditEventModel(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    aggregate_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_type: Mapped[str] = mapped_column(String(128))
+    actor: Mapped[dict] = mapped_column(JSON)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict] = mapped_column(JSON)
+    hash: Mapped[str] = mapped_column(String(128))
+    previous_event_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
