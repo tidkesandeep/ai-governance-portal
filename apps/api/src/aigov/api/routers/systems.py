@@ -13,6 +13,7 @@ from aigov.api.schemas import (
     DeploymentGateRequest,
     EvidenceAttachRequest,
     ExceptionRequest,
+    FindingRequest,
     OversightRequest,
     PolicyDecisionOut,
     RiskAssessmentOut,
@@ -28,6 +29,7 @@ from aigov.api.serialize import (
 from aigov.application.governance import (
     EvidenceRejectedError,
     ExceptionRejectedError,
+    FindingRejectedError,
     GovernanceService,
     NotFoundError,
     SegregationOfDutiesError,
@@ -75,6 +77,19 @@ def _exception_rejected(exc: ExceptionRejectedError) -> HTTPException:
     )
 
 
+def _finding_rejected(exc: FindingRejectedError) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "type": "https://api.aigov.local/problems/finding-rejected",
+            "title": "Finding rejected",
+            "status": 422,
+            "code": exc.code,
+            "detail": exc.detail,
+        },
+    )
+
+
 async def _system_360(
     svc: GovernanceService, principal: Principal, system_id: str
 ) -> AISystem360Out:
@@ -88,6 +103,8 @@ async def _system_360(
     authorization = await svc.latest_authorization(principal, system_id)
     cases = await svc.list_cases(principal, system_id)
     exceptions = await svc.list_exceptions(principal, system_id)
+    findings = await svc.list_findings(principal, system_id)
+    incidents = await svc.list_incidents(principal, system_id)
     return system_360(
         system,
         assessment,
@@ -99,6 +116,8 @@ async def _system_360(
         authorization,
         cases,
         exceptions,
+        findings,
+        incidents,
     )
 
 
@@ -395,6 +414,83 @@ async def revoke_exception(
         raise _sod(exc) from exc
     except ExceptionRejectedError as exc:
         raise _exception_rejected(exc) from exc
+
+
+@router.post("/{system_id}/findings", response_model=AISystem360Out, status_code=201)
+async def record_finding(
+    system_id: str,
+    body: FindingRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.record_finding(
+            principal,
+            system_id,
+            finding_type=body.findingType,
+            severity=body.severity,
+            summary=body.summary,
+            detector=body.detector,
+        )
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except FindingRejectedError as exc:
+        raise _finding_rejected(exc) from exc
+
+
+@router.post("/{system_id}/findings/{finding_id}/promote", response_model=AISystem360Out)
+async def promote_finding(
+    system_id: str,
+    finding_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.promote_finding(principal, system_id, finding_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except FindingRejectedError as exc:
+        raise _finding_rejected(exc) from exc
+
+
+@router.post("/{system_id}/findings/{finding_id}/dismiss", response_model=AISystem360Out)
+async def dismiss_finding(
+    system_id: str,
+    finding_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.dismiss_finding(principal, system_id, finding_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except FindingRejectedError as exc:
+        raise _finding_rejected(exc) from exc
+
+
+@router.post("/{system_id}/incidents/{incident_id}/resolve", response_model=AISystem360Out)
+async def resolve_incident(
+    system_id: str,
+    incident_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.resolve_incident(principal, system_id, incident_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except FindingRejectedError as exc:
+        raise _finding_rejected(exc) from exc
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
