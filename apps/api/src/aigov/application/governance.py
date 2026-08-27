@@ -41,6 +41,16 @@ from aigov.domains.findings.service import (
     validate_finding,
 )
 from aigov.domains.identity.principal import Principal
+from aigov.domains.integrations.github import (
+    CHECK_NAME,
+    GitHubWebhookError,
+    conclusion_for_outcome,
+    parse_repo,
+    parse_sha,
+    parse_system_id,
+    verify_signature,
+)
+from aigov.domains.outbox.service import publish_unpublished
 from aigov.domains.policy.engine import PolicyEngine, PolicyEvaluation
 from aigov.domains.reconciliation.service import (
     ObservationRuleError,
@@ -62,6 +72,7 @@ from aigov.domains.workflow.service import (
     exceptions_to_policy_document,
     validate_exception_request,
 )
+from aigov.infrastructure.github import GitHubApiError, create_check_run
 from aigov.infrastructure.ids import new_id, utcnow
 from aigov.infrastructure.models import (
     ActionAuthorizationModel,
@@ -70,9 +81,11 @@ from aigov.infrastructure.models import (
     ApprovalModel,
     CapabilityModel,
     DeploymentAuthorizationModel,
+    EventOutboxModel,
     EvidenceArtifactModel,
     ExceptionModel,
     FindingModel,
+    GitHubCheckModel,
     GovernanceDecisionModel,
     IncidentModel,
     PolicyDecisionModel,
@@ -82,6 +95,7 @@ from aigov.infrastructure.models import (
     WorkflowCaseModel,
 )
 from aigov.infrastructure.object_store import ObjectStorePort
+from aigov.infrastructure.outbox import sink_from_settings
 
 
 class NotFoundError(Exception):
@@ -524,6 +538,148 @@ class GovernanceService:
             .order_by(ReconciliationResultModel.reconciled_at.desc())
             .limit(1)
         )
+
+    async def list_outbox(
+        self, principal: Principal, system_id: str, *, limit: int = 20
+    ) -> list[EventOutboxModel]:
+        await self.get_system(principal, system_id)
+        result = await self.session.scalars(
+            select(EventOutboxModel)
+            .where(
+                EventOutboxModel.tenant_id == principal.tenant_id,
+                EventOutboxModel.aggregate_id == system_id,
+            )
+            .order_by(EventOutboxModel.occurred_at.desc())
+            .limit(limit)
+        )
+        return list(result)
+
+    async def list_github_checks(
+        self, principal: Principal, system_id: str, *, limit: int = 20
+    ) -> list[GitHubCheckModel]:
+        await self.get_system(principal, system_id)
+        result = await self.session.scalars(
+            select(GitHubCheckModel)
+            .where(
+                GitHubCheckModel.tenant_id == principal.tenant_id,
+                GitHubCheckModel.system_id == system_id,
+            )
+            .order_by(GitHubCheckModel.recorded_at.desc())
+            .limit(limit)
+        )
+        return list(result)
+
+    async def latest_github_check(
+        self, principal: Principal, system_id: str
+    ) -> GitHubCheckModel | None:
+        return await self.session.scalar(
+            select(GitHubCheckModel)
+            .where(
+                GitHubCheckModel.tenant_id == principal.tenant_id,
+                GitHubCheckModel.system_id == system_id,
+            )
+            .order_by(GitHubCheckModel.recorded_at.desc())
+            .limit(1)
+        )
+
+    async def publish_outbox(self, principal: Principal, *, limit: int = 100) -> int:
+        sink = sink_from_settings(self.settings.kafka_bootstrap_servers, self.settings.kafka_topic)
+        return await publish_unpublished(
+            self.session, sink, limit=limit, tenant_id=principal.tenant_id
+        )
+
+    async def record_github_check(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        sha: str,
+        repo: str | None,
+    ) -> GitHubCheckModel:
+        system = await self.get_system(principal, system_id)
+        decision = await self.latest_decision(principal, system_id)
+        outcome = decision.outcome if decision else "BLOCK"
+        conclusion = conclusion_for_outcome(outcome)
+        now = utcnow()
+        html_url = None
+        token = (self.settings.github_token or "").strip()
+        if token and repo and sha:
+            try:
+                html_url = await create_check_run(
+                    token=token,
+                    repo=repo,
+                    sha=sha,
+                    conclusion=conclusion,
+                    title=f"Deployment gate {outcome}",
+                    summary=f"Control-plane gate for {system.id} is {outcome}.",
+                )
+            except GitHubApiError:
+                html_url = None
+        row = GitHubCheckModel(
+            id=new_id("ghchk"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            sha=sha,
+            repo=repo,
+            name=CHECK_NAME,
+            status="completed",
+            conclusion=conclusion,
+            html_url=html_url,
+            decision_id=decision.id if decision else None,
+            recorded_at=now,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="GitHubCheckRecorded",
+            actor=_actor(principal),
+            payload={
+                "checkId": row.id,
+                "sha": sha,
+                "repo": repo,
+                "conclusion": conclusion,
+                "outcome": outcome,
+                "decisionId": row.decision_id,
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def handle_github_webhook(
+        self, *, body: bytes, signature: str | None
+    ) -> GitHubCheckModel:
+        verify_signature(
+            secret=self.settings.github_webhook_secret or "",
+            body=body,
+            header=signature,
+        )
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise GitHubWebhookError("invalid JSON payload", "INVALID_PAYLOAD") from exc
+        if not isinstance(payload, dict):
+            raise GitHubWebhookError("invalid JSON payload", "INVALID_PAYLOAD")
+        system_id = parse_system_id(payload)
+        if not system_id:
+            raise GitHubWebhookError("missing aigov system id", "MISSING_SYSTEM_ID")
+        sha = parse_sha(payload)
+        if not sha:
+            raise GitHubWebhookError("missing commit sha", "MISSING_SHA")
+        repo = parse_repo(payload)
+        system = await self.session.get(AISystemModel, system_id)
+        if system is None:
+            raise NotFoundError(system_id)
+        actor = Principal(
+            tenant_id=system.tenant_id,
+            actor_id="github-webhook",
+            actor_type="system",
+            roles=("ml_engineer",),
+            display_name="GitHub webhook",
+            auth_method="github",
+        )
+        return await self.record_github_check(actor, system_id, sha=sha, repo=repo)
 
     async def latest_allow_snapshot(
         self, principal: Principal, system: AISystemModel
