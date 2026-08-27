@@ -65,6 +65,62 @@ def test_autonomous_without_oversight_blocks() -> None:
     assert result.reasons[0].code == "MISSING_HUMAN_OVERSIGHT"
 
 
+def test_unknown_required_evidence_blocks() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            asset={
+                "risk_band": "HIGH",
+                "data_classification": "INTERNAL",
+                "autonomy_level": "HUMAN_IN_LOOP",
+                "uses_customer_decision": False,
+            },
+            approvals={"security": True},
+            risk={"band": "HIGH", "confidence": 0.9},
+            evidence={
+                "stale": False,
+                "controls": [
+                    {
+                        "id": "CTRL-ML-PERF-001",
+                        "type": "EVALUATION_RUN",
+                        "required": True,
+                        "status": "UNKNOWN",
+                    }
+                ],
+            },
+        )
+    )
+    assert result.outcome == "BLOCK"
+    assert any(reason.code == "MISSING_REQUIRED_EVIDENCE" for reason in result.reasons)
+
+
+def test_stale_required_evidence_blocks_high() -> None:
+    result = evaluate_deployment_document(
+        _base(
+            asset={
+                "risk_band": "HIGH",
+                "data_classification": "INTERNAL",
+                "autonomy_level": "HUMAN_IN_LOOP",
+                "uses_customer_decision": False,
+            },
+            approvals={"security": True},
+            risk={"band": "HIGH", "confidence": 0.9},
+            evidence={
+                "stale": True,
+                "controls": [
+                    {
+                        "id": "CTRL-ML-PERF-001",
+                        "type": "EVALUATION_RUN",
+                        "required": True,
+                        "status": "STALE",
+                    }
+                ],
+            },
+        )
+    )
+    assert result.outcome == "BLOCK"
+    assert any(reason.code == "STALE_EVIDENCE" for reason in result.reasons)
+
+
 def test_missing_assessment_blocks() -> None:
     result = evaluate_deployment_document(_base(risk={}))
     assert result.outcome == "BLOCK"
