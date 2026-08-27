@@ -10,6 +10,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aigov.config import Settings, get_settings
+from aigov.domains.adapters.ports import AdapterError, RuntimeBindingView
+from aigov.domains.adapters.service import (
+    BindingRuleError,
+    validate_binding,
+    validate_enforce_action,
+    validate_scenario,
+)
 from aigov.domains.agents.service import (
     CapabilityRuleError,
     capability_to_policy_document,
@@ -72,11 +79,13 @@ from aigov.domains.workflow.service import (
     exceptions_to_policy_document,
     validate_exception_request,
 )
+from aigov.infrastructure.adapters import ExecutionPlane, execution_plane_from_settings
 from aigov.infrastructure.github import GitHubApiError, create_check_run
 from aigov.infrastructure.ids import new_id, utcnow
 from aigov.infrastructure.models import (
     ActionAuthorizationModel,
     ActionDecisionModel,
+    AdapterRunModel,
     AISystemModel,
     ApprovalModel,
     CapabilityModel,
@@ -91,6 +100,7 @@ from aigov.infrastructure.models import (
     PolicyDecisionModel,
     ReconciliationResultModel,
     RiskAssessmentModel,
+    RuntimeBindingModel,
     RuntimeObservationModel,
     WorkflowCaseModel,
 )
@@ -142,6 +152,13 @@ class ObservationRejectedError(Exception):
         self.code = code
 
 
+class AdapterRejectedError(Exception):
+    def __init__(self, detail: str, code: str = "ADAPTER_REJECTED") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+
+
 APPROVER_ROLES = {
     "privacy": ("privacy",),
     "security": ("security",),
@@ -187,12 +204,14 @@ class GovernanceService:
         policy_engine: PolicyEngine,
         object_store: ObjectStorePort,
         settings: Settings | None = None,
+        execution_plane: ExecutionPlane | None = None,
     ) -> None:
         self.session = session
         self.policy_engine = policy_engine
         self.object_store = object_store
         self.settings = settings or get_settings()
         self.audit = AuditLog(session)
+        self.execution_plane = execution_plane or execution_plane_from_settings(self.settings)
 
     async def register(self, principal: Principal, registration: dict[str, Any]) -> AISystemModel:
         system_id = new_id("sys")
@@ -680,6 +699,304 @@ class GovernanceService:
             auth_method="github",
         )
         return await self.record_github_check(actor, system_id, sha=sha, repo=repo)
+
+    def _binding_view(self, row: RuntimeBindingModel) -> RuntimeBindingView:
+        return RuntimeBindingView(
+            id=row.id,
+            system_id=row.system_id,
+            provider=row.provider,
+            service=row.service,
+            resource_ref=row.resource_ref,
+            region=row.region,
+            account_ref=row.account_ref,
+        )
+
+    async def latest_binding(
+        self, principal: Principal, system_id: str
+    ) -> RuntimeBindingModel | None:
+        return await self.session.scalar(
+            select(RuntimeBindingModel)
+            .where(
+                RuntimeBindingModel.tenant_id == principal.tenant_id,
+                RuntimeBindingModel.system_id == system_id,
+                RuntimeBindingModel.status == "ACTIVE",
+            )
+            .order_by(RuntimeBindingModel.created_at.desc())
+            .limit(1)
+        )
+
+    async def require_binding(self, principal: Principal, system_id: str) -> RuntimeBindingModel:
+        row = await self.latest_binding(principal, system_id)
+        if row is None:
+            raise AdapterRejectedError(
+                "bind the system to a cloud runtime before running an adapter",
+                "BINDING_REQUIRED",
+            )
+        return row
+
+    async def list_adapter_runs(
+        self, principal: Principal, system_id: str, *, limit: int = 20
+    ) -> list[AdapterRunModel]:
+        await self.get_system(principal, system_id)
+        result = await self.session.scalars(
+            select(AdapterRunModel)
+            .where(
+                AdapterRunModel.tenant_id == principal.tenant_id,
+                AdapterRunModel.system_id == system_id,
+            )
+            .order_by(AdapterRunModel.recorded_at.desc())
+            .limit(limit)
+        )
+        return list(result)
+
+    async def bind_runtime(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        provider: str,
+        resource_ref: str,
+        service: str | None = None,
+        region: str | None = None,
+        account_ref: str | None = None,
+    ) -> RuntimeBindingModel:
+        system = await self.get_system(principal, system_id)
+        try:
+            cloud, resolved_service, ref, resolved_region = validate_binding(
+                provider=provider,
+                resource_ref=resource_ref,
+                service=service,
+                region=region,
+            )
+        except BindingRuleError as exc:
+            raise AdapterRejectedError(exc.detail, exc.code) from exc
+        now = utcnow()
+        current = await self.latest_binding(principal, system_id)
+        if current is not None:
+            current.status = "SUPERSEDED"
+            current.superseded_at = now
+        row = RuntimeBindingModel(
+            id=new_id("bind"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            provider=cloud,
+            service=resolved_service,
+            resource_ref=ref,
+            region=resolved_region,
+            account_ref=(account_ref or "").strip() or None,
+            status="ACTIVE",
+            created_at=now,
+            superseded_at=None,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="RuntimeBindingCreated",
+            actor=_actor(principal),
+            payload={
+                "bindingId": row.id,
+                "provider": cloud,
+                "service": resolved_service,
+                "resourceRef": ref,
+                "region": resolved_region,
+            },
+        )
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def _record_adapter_run(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        binding: RuntimeBindingModel,
+        *,
+        kind: str,
+        status: str,
+        result: dict[str, Any],
+        action: str | None = None,
+        error: str | None = None,
+        commit: bool = False,
+    ) -> AdapterRunModel:
+        now = utcnow()
+        row = AdapterRunModel(
+            id=new_id("adp"),
+            tenant_id=principal.tenant_id,
+            system_id=system.id,
+            binding_id=binding.id,
+            kind=kind,
+            provider=binding.provider,
+            status=status,
+            action=action,
+            result=result,
+            error=error,
+            recorded_at=now,
+        )
+        self.session.add(row)
+        await self.audit.append(
+            tenant_id=principal.tenant_id,
+            aggregate_id=system.id,
+            event_type="AdapterRunRecorded",
+            actor=_actor(principal),
+            payload={
+                "runId": row.id,
+                "kind": kind,
+                "provider": binding.provider,
+                "status": status,
+                "action": action,
+            },
+        )
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(row)
+        return row
+
+    async def discover_runtime(self, principal: Principal, system_id: str) -> AdapterRunModel:
+        system = await self.get_system(principal, system_id)
+        binding = await self.require_binding(principal, system_id)
+        adapter = self.execution_plane.adapter(binding.provider)
+        try:
+            discovered = await adapter.discover(self._binding_view(binding))
+            return await self._record_adapter_run(
+                principal,
+                system,
+                binding,
+                kind="discover",
+                status="SUCCEEDED",
+                result=discovered,
+                commit=True,
+            )
+        except AdapterError as exc:
+            await self._record_adapter_run(
+                principal,
+                system,
+                binding,
+                kind="discover",
+                status="FAILED",
+                result={},
+                error=exc.detail,
+                commit=True,
+            )
+            raise AdapterRejectedError(exc.detail, exc.code) from exc
+
+    async def collect_runtime(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        scenario: str | None = None,
+    ) -> RuntimeObservationModel:
+        system = await self.get_system(principal, system_id)
+        binding = await self.require_binding(principal, system_id)
+        try:
+            resolved = validate_scenario(scenario)
+        except BindingRuleError as exc:
+            raise AdapterRejectedError(exc.detail, exc.code) from exc
+        adapter = self.execution_plane.adapter(binding.provider)
+        try:
+            observed = await adapter.collect(
+                self._binding_view(binding),
+                current_version_id=system.current_version_id,
+                environment=system.environment,
+                scenario=resolved,
+            )
+        except AdapterError as exc:
+            await self._record_adapter_run(
+                principal,
+                system,
+                binding,
+                kind="collect",
+                status="FAILED",
+                result={"scenario": resolved},
+                error=exc.detail,
+                commit=True,
+            )
+            raise AdapterRejectedError(exc.detail, exc.code) from exc
+        await self._record_adapter_run(
+            principal,
+            system,
+            binding,
+            kind="collect",
+            status="SUCCEEDED",
+            result=observed.raw,
+        )
+        return await self.record_observation(
+            principal,
+            system_id,
+            running=observed.running,
+            asset_version_id=observed.asset_version_id,
+            environment=observed.environment,
+            cloud=observed.cloud,
+            region=observed.region,
+            fingerprint=observed.fingerprint,
+        )
+
+    async def enforce_runtime(
+        self,
+        principal: Principal,
+        system_id: str,
+        *,
+        action: str | None = None,
+        reason: str = "OPERATOR",
+    ) -> AdapterRunModel:
+        system = await self.get_system(principal, system_id)
+        binding = await self.require_binding(principal, system_id)
+        try:
+            resolved = validate_enforce_action(action)
+        except BindingRuleError as exc:
+            raise AdapterRejectedError(exc.detail, exc.code) from exc
+        return await self._enforce_bound(
+            principal,
+            system,
+            binding,
+            action=resolved,
+            reason=reason,
+            commit=True,
+        )
+
+    async def _enforce_bound(
+        self,
+        principal: Principal,
+        system: AISystemModel,
+        binding: RuntimeBindingModel,
+        *,
+        action: str,
+        reason: str,
+        commit: bool,
+    ) -> AdapterRunModel:
+        adapter = self.execution_plane.adapter(binding.provider)
+        try:
+            result = await adapter.enforce(
+                self._binding_view(binding),
+                action=action,
+                reason=reason,
+            )
+            return await self._record_adapter_run(
+                principal,
+                system,
+                binding,
+                kind="enforce",
+                status="SUCCEEDED",
+                result=result,
+                action=action,
+                commit=commit,
+            )
+        except AdapterError as exc:
+            row = await self._record_adapter_run(
+                principal,
+                system,
+                binding,
+                kind="enforce",
+                status="FAILED",
+                result={"action": action, "reason": reason},
+                action=action,
+                error=exc.detail,
+                commit=commit,
+            )
+            if commit:
+                raise AdapterRejectedError(exc.detail, exc.code) from exc
+            return row
 
     async def latest_allow_snapshot(
         self, principal: Principal, system: AISystemModel
@@ -1886,6 +2203,16 @@ class GovernanceService:
             risk_band=assessment.risk_band if assessment else None,
             now=now,
         )
+        binding = await self.latest_binding(principal, system.id)
+        if binding is not None:
+            await self._enforce_bound(
+                principal,
+                system,
+                binding,
+                action="CONTAIN",
+                reason="RUNTIME_DRIFT",
+                commit=False,
+            )
         await self.audit.append(
             tenant_id=principal.tenant_id,
             aggregate_id=system.id,
