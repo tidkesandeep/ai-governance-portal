@@ -1,13 +1,12 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.3.0
+  version: 0.4.0
   description: |
-    Slice 3 contract: AI system registry, deterministic risk assessment,
-    hashed evidence with freshness and version binding, immutable governance
-    snapshots, and short-lived HMAC-signed deployment authorization.
-    Unknown or stale evidence cannot satisfy a mandatory control. BLOCK and
-    REVIEW snapshots never mint an authorization.
+    Slice 4 contract: AI system registry, deterministic risk, hashed evidence,
+    fail-closed deployment gate, immutable snapshots, short-lived authorization,
+    workflow cases with SLA clocks, and time-bounded exceptions. Expired or
+    version-unbound exceptions cannot satisfy a mandatory control.
   license:
     name: Apache-2.0
 servers:
@@ -21,6 +20,7 @@ tags:
   - name: Audit
   - name: Evidence
   - name: Authorization
+  - name: Workflow
 security:
   - bearerAuth: []
 paths:
@@ -291,6 +291,89 @@ paths:
                 $ref: "#/components/schemas/DeploymentAuthorization"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions:
+    post:
+      tags: [Workflow]
+      summary: Request a time-bounded exception for a named gate violation
+      operationId: requestException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExceptionRequest"
+      responses:
+        "201":
+          description: Exception requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions/{exceptionId}/grant:
+    post:
+      tags: [Workflow]
+      summary: Grant a requested exception (reviewer, segregation of duties)
+      operationId: grantException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/exceptionId"
+      responses:
+        "200":
+          description: Exception granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions/{exceptionId}/deny:
+    post:
+      tags: [Workflow]
+      summary: Deny a requested exception
+      operationId: denyException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/exceptionId"
+      responses:
+        "200":
+          description: Exception denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions/{exceptionId}/revoke:
+    post:
+      tags: [Workflow]
+      summary: Revoke a granted exception and active deployment authorizations
+      operationId: revokeException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/exceptionId"
+      responses:
+        "200":
+          description: Exception revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/ai-systems/{systemId}/versions:
     post:
       tags: [AI Systems]
@@ -322,6 +405,12 @@ components:
         type: string
     authorizationId:
       name: authorizationId
+      in: path
+      required: true
+      schema:
+        type: string
+    exceptionId:
+      name: exceptionId
       in: path
       required: true
       schema:
@@ -664,6 +753,16 @@ components:
           $ref: "#/components/schemas/GovernanceSnapshot"
         latestAuthorization:
           $ref: "#/components/schemas/DeploymentAuthorization"
+        latestCase:
+          $ref: "#/components/schemas/WorkflowCase"
+        cases:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowCase"
+        exceptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExceptionRecord"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -865,6 +964,92 @@ components:
             type: string
         authorization:
           $ref: "#/components/schemas/DeploymentAuthorization"
+    ExceptionRequest:
+      type: object
+      required: [violationCode, justification]
+      properties:
+        violationCode:
+          type: string
+        justification:
+          type: string
+          minLength: 8
+        expiresAt:
+          type: string
+          format: date-time
+        controlId:
+          type: string
+    WorkflowCase:
+      type: object
+      required: [id, systemId, caseType, status, slaStatus, openedAt, dueAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        decisionId:
+          type: string
+        snapshotId:
+          type: string
+        caseType:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, CLOSED]
+        riskBand:
+          $ref: "#/components/schemas/RiskBand"
+        reasonCodes:
+          type: array
+          items:
+            type: string
+        slaStatus:
+          type: string
+          enum: [ON_TRACK, DUE_SOON, OVERDUE]
+        openedAt:
+          type: string
+          format: date-time
+        dueAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+    ExceptionRecord:
+      type: object
+      required: [id, systemId, violationCode, status, requestedBy, requestedAt, expiresAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        caseId:
+          type: string
+        violationCode:
+          type: string
+        controlId:
+          type: string
+        boundVersionId:
+          type: string
+        justification:
+          type: string
+        status:
+          type: string
+          enum: [REQUESTED, GRANTED, DENIED, EXPIRED, REVOKED]
+        requestedBy:
+          type: string
+        grantedBy:
+          type: string
+        requestedAt:
+          type: string
+          format: date-time
+        grantedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
     AuditEvent:
       type: object
       required:
