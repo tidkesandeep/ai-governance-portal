@@ -37,7 +37,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="flex min-h-screen flex-col">
           <header className="flex items-center justify-between border-b border-rule px-6 py-4">
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-navy/60">
-              Slice 6 · agent action · resource authz
+              Slice 7 · desired vs observed
             </p>
             <label className="flex items-center gap-2 font-mono text-xs">
               Acting as
