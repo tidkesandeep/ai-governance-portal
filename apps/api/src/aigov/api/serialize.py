@@ -3,6 +3,7 @@ from __future__ import annotations
 from aigov.api.schemas import (
     ActionAuthorizationOut,
     ActionDecisionOut,
+    AdapterRunOut,
     AISystem360Out,
     AISystemOut,
     ApprovalOut,
@@ -22,6 +23,7 @@ from aigov.api.schemas import (
     ReconciliationOut,
     RiskAssessmentOut,
     RiskDriverOut,
+    RuntimeBindingOut,
     RuntimeObservationOut,
     WorkflowCaseOut,
 )
@@ -32,6 +34,7 @@ from aigov.infrastructure.ids import utcnow
 from aigov.infrastructure.models import (
     ActionAuthorizationModel,
     ActionDecisionModel,
+    AdapterRunModel,
     AISystemModel,
     ApprovalModel,
     AuditEventModel,
@@ -47,6 +50,7 @@ from aigov.infrastructure.models import (
     PolicyDecisionModel,
     ReconciliationResultModel,
     RiskAssessmentModel,
+    RuntimeBindingModel,
     RuntimeObservationModel,
     WorkflowCaseModel,
 )
@@ -396,6 +400,36 @@ def github_check_out(row: GitHubCheckModel) -> GitHubCheckOut:
     )
 
 
+def runtime_binding_out(row: RuntimeBindingModel) -> RuntimeBindingOut:
+    return RuntimeBindingOut(
+        id=row.id,
+        systemId=row.system_id,
+        provider=row.provider,
+        service=row.service,
+        resourceRef=row.resource_ref,
+        region=row.region,
+        accountRef=row.account_ref,
+        status=row.status,
+        createdAt=row.created_at,
+        supersededAt=row.superseded_at,
+    )
+
+
+def adapter_run_out(row: AdapterRunModel) -> AdapterRunOut:
+    return AdapterRunOut(
+        id=row.id,
+        systemId=row.system_id,
+        bindingId=row.binding_id,
+        kind=row.kind,
+        provider=row.provider,
+        status=row.status,
+        action=row.action,
+        result=row.result or {},
+        error=row.error,
+        recordedAt=row.recorded_at,
+    )
+
+
 def system_360(
     system: AISystemModel,
     assessment: RiskAssessmentModel | None,
@@ -416,6 +450,8 @@ def system_360(
     reconciliation: ReconciliationResultModel | None = None,
     outbox_events: list[EventOutboxModel] | None = None,
     github_checks: list[GitHubCheckModel] | None = None,
+    binding: RuntimeBindingModel | None = None,
+    adapter_runs: list[AdapterRunModel] | None = None,
 ) -> AISystem360Out:
     case_items = [case_out(row) for row in cases or []]
     incident_items = [incident_out(row) for row in incidents or []]
@@ -474,4 +510,7 @@ def system_360(
         latestOutboxEvents=[outbox_out(row) for row in outbox_events or []],
         githubChecks=[github_check_out(row) for row in github_checks or []],
         latestGithubCheck=github_check_out(github_checks[0]) if github_checks else None,
+        runtimeBinding=runtime_binding_out(binding) if binding else None,
+        adapterRuns=[adapter_run_out(row) for row in adapter_runs or []],
+        latestAdapterRun=adapter_run_out(adapter_runs[0]) if adapter_runs else None,
     )
