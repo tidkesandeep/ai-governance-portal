@@ -89,6 +89,41 @@ class AuditEventModel(Base):
     previous_event_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class GovernanceDecisionModel(Base):
+    __tablename__ = "governance_decisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    policy_decision_id: Mapped[str] = mapped_column(String(64), index=True)
+    outcome: Mapped[str] = mapped_column(String(32))
+    asset_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(128))
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DeploymentAuthorizationModel(Base):
+    __tablename__ = "deployment_authorizations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    decision_id: Mapped[str] = mapped_column(String(64), index=True)
+    asset_version_id: Mapped[str] = mapped_column(String(64), index=True)
+    environment: Mapped[str] = mapped_column(String(32))
+    cloud: Mapped[str] = mapped_column(String(64))
+    region: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    audience: Mapped[str] = mapped_column(String(64))
+    nonce: Mapped[str] = mapped_column(String(128), unique=True)
+    fingerprint: Mapped[str] = mapped_column(String(128))
+    signature: Mapped[str] = mapped_column(String(128))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class EvidenceArtifactModel(Base):
     __tablename__ = "evidence_artifacts"
 
