@@ -68,6 +68,28 @@ violation[{"code": "RUNTIME_INCIDENT", "severity": "HIGH", "message": "an open r
 	incident.status == "OPEN"
 }
 
+violation[{"code": "RUNTIME_DRIFT", "severity": "HIGH", "message": "observed runtime state does not match the authorized desired state"}] {
+	input.reconciliation.high_drift == true
+}
+
+violation[{"code": "RUNTIME_DRIFT", "severity": "HIGH", "message": "observed runtime state does not match the authorized desired state"}] {
+	input.reconciliation.status == "DRIFT"
+	reason := input.reconciliation.reasons[_]
+	reason.severity == "HIGH"
+}
+
+violation[{"code": "STALE_OBSERVATION", "severity": "HIGH", "message": "runtime observation is stale relative to the freshness window"}] {
+	high_risk
+	stale_observation
+	not waived("STALE_OBSERVATION")
+}
+
+violation[{"code": "STALE_OBSERVATION", "severity": "MEDIUM", "message": "runtime observation is stale relative to the freshness window"}] {
+	not high_risk
+	stale_observation
+	not waived("STALE_OBSERVATION")
+}
+
 stale_required {
 	control := input.evidence.controls[_]
 	control.required == true
@@ -78,11 +100,17 @@ stale_required {
 	input.evidence.stale == true
 }
 
+stale_observation {
+	reason := input.reconciliation.reasons[_]
+	reason.code == "STALE_OBSERVATION"
+}
+
 non_waivable := {
 	"EVIDENCE_HASH_FAILURE": true,
 	"MISSING_ASSESSMENT": true,
 	"POLICY_ENGINE_UNAVAILABLE": true,
 	"RUNTIME_INCIDENT": true,
+	"RUNTIME_DRIFT": true,
 }
 
 waived(code) {
@@ -152,4 +180,6 @@ actions := {
 	"MISSING_REQUIRED_EVIDENCE": "attach required evidence for the current asset version",
 	"EVIDENCE_HASH_FAILURE": "re-upload evidence; stored digest does not match bytes",
 	"RUNTIME_INCIDENT": "resolve the open incident and re-evaluate the deployment gate",
+	"RUNTIME_DRIFT": "restore the authorized runtime version and re-evaluate the deployment gate",
+	"STALE_OBSERVATION": "refresh the runtime observation within the freshness window",
 }
