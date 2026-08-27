@@ -2,6 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from aigov.api.deps import current_principal, governance_service
 from aigov.api.schemas import (
+    ActionAuthorizationOut,
+    ActionAuthorizationVerifyOut,
+    ActionAuthorizeRequest,
+    ActionDecisionOut,
     AISystem360Out,
     AISystemListOut,
     AISystemRegistration,
@@ -9,6 +13,7 @@ from aigov.api.schemas import (
     AuditEventListOut,
     AuthorizationVerifyOut,
     AuthorizationVerifyRequest,
+    CapabilityRequest,
     DeploymentAuthorizationOut,
     DeploymentGateRequest,
     EvidenceAttachRequest,
@@ -19,6 +24,8 @@ from aigov.api.schemas import (
     RiskAssessmentOut,
 )
 from aigov.api.serialize import (
+    action_authorization_out,
+    action_gate_out,
     assessment_out,
     audit_out,
     authorization_out,
@@ -27,6 +34,7 @@ from aigov.api.serialize import (
     system_out,
 )
 from aigov.application.governance import (
+    CapabilityRejectedError,
     EvidenceRejectedError,
     ExceptionRejectedError,
     FindingRejectedError,
@@ -90,6 +98,19 @@ def _finding_rejected(exc: FindingRejectedError) -> HTTPException:
     )
 
 
+def _capability_rejected(exc: CapabilityRejectedError) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "type": "https://api.aigov.local/problems/capability-rejected",
+            "title": "Capability rejected",
+            "status": 422,
+            "code": exc.code,
+            "detail": exc.detail,
+        },
+    )
+
+
 async def _system_360(
     svc: GovernanceService, principal: Principal, system_id: str
 ) -> AISystem360Out:
@@ -105,6 +126,9 @@ async def _system_360(
     exceptions = await svc.list_exceptions(principal, system_id)
     findings = await svc.list_findings(principal, system_id)
     incidents = await svc.list_incidents(principal, system_id)
+    capabilities = await svc.list_capabilities(principal, system_id)
+    action_decision = await svc.latest_action_decision(principal, system_id)
+    action_authorization = await svc.latest_action_authorization(principal, system_id)
     return system_360(
         system,
         assessment,
@@ -118,6 +142,9 @@ async def _system_360(
         exceptions,
         findings,
         incidents,
+        capabilities,
+        action_decision,
+        action_authorization,
     )
 
 
@@ -491,6 +518,115 @@ async def resolve_incident(
         raise _sod(exc) from exc
     except FindingRejectedError as exc:
         raise _finding_rejected(exc) from exc
+
+
+@router.post("/{system_id}/capabilities", response_model=AISystem360Out, status_code=201)
+async def declare_capability(
+    system_id: str,
+    body: CapabilityRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.declare_capability(
+            principal,
+            system_id,
+            action=body.action,
+            resource_pattern=body.resourcePattern,
+            max_amount=body.maxAmount,
+            requires_approval=body.requiresApproval,
+        )
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except CapabilityRejectedError as exc:
+        raise _capability_rejected(exc) from exc
+
+
+@router.post("/{system_id}/capabilities/{capability_id}/approve", response_model=AISystem360Out)
+async def approve_capability(
+    system_id: str,
+    capability_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> AISystem360Out:
+    try:
+        await svc.approve_capability(principal, system_id, capability_id)
+        return await _system_360(svc, principal, system_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except SegregationOfDutiesError as exc:
+        raise _sod(exc) from exc
+    except CapabilityRejectedError as exc:
+        raise _capability_rejected(exc) from exc
+
+
+@router.post("/{system_id}/actions/authorize", response_model=ActionDecisionOut)
+async def authorize_action(
+    system_id: str,
+    body: ActionAuthorizeRequest,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> ActionDecisionOut:
+    try:
+        result = await svc.authorize_action(
+            principal,
+            system_id,
+            action=body.action,
+            resource=body.resource,
+            amount=body.amount,
+        )
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    except CapabilityRejectedError as exc:
+        raise _capability_rejected(exc) from exc
+    return action_gate_out(result)
+
+
+@router.post(
+    "/{system_id}/action-authorizations/{authorization_id}/verify",
+    response_model=ActionAuthorizationVerifyOut,
+)
+async def verify_action_authorization(
+    system_id: str,
+    authorization_id: str,
+    body: AuthorizationVerifyRequest | None = None,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> ActionAuthorizationVerifyOut:
+    payload = body or AuthorizationVerifyRequest()
+    try:
+        row, check = await svc.verify_action_authorization(
+            principal,
+            system_id,
+            authorization_id,
+            presented_signature=payload.signature,
+            consume=payload.consume,
+        )
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    return ActionAuthorizationVerifyOut(
+        outcome=check.outcome,
+        reasons=check.reasons,
+        authorization=action_authorization_out(row),
+    )
+
+
+@router.post(
+    "/{system_id}/action-authorizations/{authorization_id}/revoke",
+    response_model=ActionAuthorizationOut,
+)
+async def revoke_action_authorization(
+    system_id: str,
+    authorization_id: str,
+    principal: Principal = Depends(current_principal),
+    svc: GovernanceService = Depends(governance_service),
+) -> ActionAuthorizationOut:
+    try:
+        row = await svc.revoke_action_authorization(principal, system_id, authorization_id)
+    except NotFoundError as exc:
+        raise _not_found() from exc
+    return action_authorization_out(row)
 
 
 @router.post("/{system_id}/versions", response_model=AISystem360Out, status_code=201)
