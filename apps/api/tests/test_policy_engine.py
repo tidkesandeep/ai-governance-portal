@@ -1,4 +1,4 @@
-from aigov.domains.policy.engine import evaluate_deployment_document
+from aigov.domains.policy.engine import evaluate_action_document, evaluate_deployment_document
 
 
 def _base(**overrides):
@@ -218,3 +218,79 @@ def test_resolved_incident_does_not_block() -> None:
         _base(incidents=[{"id": "inc_1", "status": "RESOLVED", "severity": "CRITICAL"}])
     )
     assert result.outcome == "ALLOW"
+
+
+def _action_base(**overrides):
+    document = {
+        "asset": {
+            "system_type": "AGENT",
+            "status": "APPROVED",
+            "deploy_authorized": True,
+            "autonomy_level": "SEMI_AUTONOMOUS",
+            "version_id": "ver_1",
+        },
+        "incidents": [],
+        "request": {"action": "payments.refund", "resource": "account:retail-123", "amount": 50},
+        "capability": {
+            "action": "payments.refund",
+            "resource_pattern": "account:retail-*",
+            "resource_match": True,
+            "max_amount": 500,
+            "requires_approval": True,
+            "approved": True,
+        },
+    }
+    document.update(overrides)
+    return document
+
+
+def test_approved_capability_allows_in_pattern_refund() -> None:
+    result = evaluate_action_document(_action_base())
+    assert result.outcome == "ALLOW"
+    assert result.reasons == []
+
+
+def test_undeclared_and_resource_mismatch_deny() -> None:
+    undeclared = evaluate_action_document(_action_base(capability=None))
+    assert undeclared.outcome == "DENY"
+    assert any(reason.code == "UNDECLARED_ACTION" for reason in undeclared.reasons)
+    mismatch = evaluate_action_document(
+        _action_base(
+            request={"action": "payments.refund", "resource": "account:wholesale-1", "amount": 50},
+            capability={
+                "action": "payments.refund",
+                "resource_match": False,
+                "max_amount": 500,
+                "requires_approval": True,
+                "approved": True,
+            },
+        )
+    )
+    assert mismatch.outcome == "DENY"
+    assert any(reason.code == "RESOURCE_NOT_PERMITTED" for reason in mismatch.reasons)
+
+
+def test_amount_and_missing_approval_and_incident_deny() -> None:
+    amount = evaluate_action_document(
+        _action_base(
+            request={"action": "payments.refund", "resource": "account:retail-123", "amount": 900}
+        )
+    )
+    assert any(reason.code == "AMOUNT_EXCEEDS_LIMIT" for reason in amount.reasons)
+    unapproved = evaluate_action_document(
+        _action_base(
+            capability={
+                "action": "payments.refund",
+                "resource_match": True,
+                "max_amount": 500,
+                "requires_approval": True,
+                "approved": False,
+            }
+        )
+    )
+    assert any(reason.code == "MISSING_ACTION_APPROVAL" for reason in unapproved.reasons)
+    incident = evaluate_action_document(
+        _action_base(incidents=[{"id": "inc_1", "status": "OPEN", "severity": "CRITICAL"}])
+    )
+    assert incident.outcome == "DENY"
+    assert any(reason.code == "RUNTIME_INCIDENT" for reason in incident.reasons)
