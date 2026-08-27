@@ -87,18 +87,58 @@ test_autonomous_without_oversight_blocks {
 	result == "BLOCK"
 }
 
-test_autonomous_without_oversight_blocks {
+test_granted_exception_allows_missing_evidence {
 	result := outcome with input as {
 		"asset": {
-			"risk_band": "MEDIUM",
+			"risk_band": "HIGH",
 			"data_classification": "INTERNAL",
-			"autonomy_level": "AUTONOMOUS",
+			"autonomy_level": "HUMAN_IN_LOOP",
 			"uses_customer_decision": false,
 		},
-		"approvals": {},
+		"approvals": {"security": true},
 		"human_oversight": {"controls": []},
-		"risk": {"band": "MEDIUM", "confidence": 0.9},
-		"evidence": {"stale": false},
+		"risk": {"band": "HIGH", "confidence": 0.9},
+		"evidence": {
+			"stale": false,
+			"controls": [{
+				"id": "CTRL-ML-PERF-001",
+				"required": true,
+				"status": "UNKNOWN",
+			}],
+		},
+		"exceptions": [{
+			"violation_code": "MISSING_REQUIRED_EVIDENCE",
+			"status": "GRANTED",
+			"expired": false,
+		}],
+	}
+	result == "ALLOW"
+}
+
+test_hash_failure_exception_is_ignored {
+	result := outcome with input as {
+		"asset": {
+			"risk_band": "HIGH",
+			"data_classification": "INTERNAL",
+			"autonomy_level": "HUMAN_IN_LOOP",
+			"uses_customer_decision": false,
+		},
+		"approvals": {"security": true},
+		"human_oversight": {"controls": []},
+		"risk": {"band": "HIGH", "confidence": 0.9},
+		"evidence": {
+			"stale": false,
+			"controls": [{
+				"id": "CTRL-ML-PERF-001",
+				"required": true,
+				"status": "FAIL",
+			}],
+		},
+		"exceptions": [{
+			"violation_code": "EVIDENCE_HASH_FAILURE",
+			"status": "GRANTED",
+			"expired": false,
+		}],
 	}
 	result == "BLOCK"
 }
