@@ -37,3 +37,22 @@ export const INTERNAL_SAMPLE: Registration = {
   humanOversight: ["analyst_review"],
   modelRefs: ["model:cohort-v1"],
 };
+
+export const AGENT_SAMPLE: Registration = {
+  name: "Refund concierge agent",
+  systemType: "AGENT",
+  businessPurpose: "Issue retail payment refunds within a declared action and resource ceiling.",
+  owner: "payments-ops",
+  environment: "production",
+  dataClassification: "PII",
+  geography: "EU",
+  autonomyLevel: "SEMI_AUTONOMOUS",
+  customerImpact: "HIGH",
+  financialImpact: "HIGH",
+  usesCustomerDecision: true,
+  publicEndpoint: false,
+  monitoringEnabled: true,
+  evaluationRefs: ["eval_refund_agent"],
+  humanOversight: ["refund_queue"],
+  modelRefs: ["model:refund-agent-v1"],
+};
