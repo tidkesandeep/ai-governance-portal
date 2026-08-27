@@ -1,15 +1,17 @@
 openapi: 3.1.1
 info:
   title: AI Governance Control Plane API
-  version: 0.9.0
+  version: 0.10.0
   description: |
-    Slice 9 contract: AI system registry, deterministic risk, hashed evidence,
+    Slice 10 contract: AI system registry, deterministic risk, hashed evidence,
     fail-closed deployment gate, immutable snapshots, short-lived authorization,
     workflow cases with SLA clocks, time-bounded exceptions, findings, incidents,
     runtime revocation, agent action/resource authorization, desired versus
     observed reconciliation, OIDC bearer identity, Alembic schema migrations,
-    a transactional audit outbox, an operator CLI, and GitHub deployment checks.
-    Tenant, actor, and roles come from the validated token, never from the request body.
+    a transactional audit outbox, an operator CLI, GitHub deployment checks,
+    and cloud-neutral execution-plane adapters (discover, collect, enforce)
+    for AWS, Azure, and GCP. Tenant, actor, and roles come from the validated
+    token, never from the request body.
   license:
     name: Apache-2.0
 servers:
@@ -30,6 +32,7 @@ tags:
   - name: Identity
   - name: Outbox
   - name: Integrations
+  - name: Adapters
 security:
   - bearerAuth: []
 paths:
@@ -712,6 +715,126 @@ paths:
                 $ref: "#/components/schemas/GitHubCheck"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/adapters:
+    get:
+      tags: [Adapters]
+      summary: Report execution-plane adapter mode and registered providers
+      operationId: getAdapters
+      responses:
+        "200":
+          description: Adapter plane status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterStatus"
+  /v1/ai-systems/{systemId}/runtime-bindings:
+    post:
+      tags: [Adapters]
+      summary: Bind the AI system to an AWS, Azure, GCP, or local runtime
+      operationId: bindRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeBindingRequest"
+      responses:
+        "201":
+          description: Binding is active; prior binding is superseded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/runtime/discover:
+    post:
+      tags: [Adapters]
+      summary: Discover the bound cloud runtime through the execution-plane adapter
+      operationId: discoverRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "201":
+          description: Discovery result recorded as an adapter run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Live adapter unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/runtime/collect:
+    post:
+      tags: [Adapters]
+      summary: Collect observed runtime state and reconcile it against the authorized desired state
+      operationId: collectRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeCollectRequest"
+      responses:
+        "201":
+          description: Observation recorded; HIGH drift contains the runtime when a binding exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Live adapter unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/runtime/enforce:
+    post:
+      tags: [Adapters]
+      summary: Apply CONTAIN or PERMIT at the bound execution-plane runtime
+      operationId: enforceRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeEnforceRequest"
+      responses:
+        "201":
+          description: Enforcement result recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Live adapter unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/ai-systems/{systemId}/versions:
     post:
       tags: [AI Systems]
@@ -733,7 +856,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Slice 9 bearer JWT from the configured OIDC issuer, or local demo tokens `demo` / `demo-reviewer` when demo auth is enabled.
+      description: Slice 10 bearer JWT from the configured OIDC issuer, or local demo tokens `demo` / `demo-reviewer` when demo auth is enabled.
   parameters:
     systemId:
       name: systemId
@@ -1182,6 +1305,14 @@ components:
             $ref: "#/components/schemas/GitHubCheck"
         latestGithubCheck:
           $ref: "#/components/schemas/GitHubCheck"
+        runtimeBinding:
+          $ref: "#/components/schemas/RuntimeBinding"
+        adapterRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdapterRun"
+        latestAdapterRun:
+          $ref: "#/components/schemas/AdapterRun"
     ApprovalRequest:
       type: object
       required: [function, approved]
@@ -1849,6 +1980,101 @@ components:
         recordedAt:
           type: string
           format: date-time
+    RuntimeBindingRequest:
+      type: object
+      required: [provider, resourceRef]
+      properties:
+        provider:
+          type: string
+          enum: [aws, azure, gcp, local]
+        resourceRef:
+          type: string
+        service:
+          type: string
+        region:
+          type: string
+        accountRef:
+          type: string
+    RuntimeBinding:
+      type: object
+      required: [id, systemId, provider, service, resourceRef, status, createdAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        provider:
+          type: string
+        service:
+          type: string
+        resourceRef:
+          type: string
+        region:
+          type: string
+        accountRef:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        supersededAt:
+          type: string
+          format: date-time
+    RuntimeCollectRequest:
+      type: object
+      properties:
+        scenario:
+          type: string
+          enum: [in_sync, drift, stopped]
+          default: in_sync
+    RuntimeEnforceRequest:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [CONTAIN, PERMIT]
+          default: CONTAIN
+    AdapterRun:
+      type: object
+      required: [id, systemId, bindingId, kind, provider, status, recordedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        bindingId:
+          type: string
+        kind:
+          type: string
+          enum: [discover, collect, enforce]
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [SUCCEEDED, FAILED]
+        action:
+          type: string
+        result:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    AdapterStatus:
+      type: object
+      required: [mode, providers, objectStore]
+      properties:
+        mode:
+          type: string
+        providers:
+          type: array
+          items:
+            type: string
+        objectStore:
+          type: string
     AuditEvent:
       type: object
       required:
