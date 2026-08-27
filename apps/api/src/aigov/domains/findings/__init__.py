@@ -1,0 +1,1 @@
+"""Findings and incident domain."""
