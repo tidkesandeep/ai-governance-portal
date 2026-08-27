@@ -1,0 +1,2112 @@
+openapi: 3.1.1
+info:
+  title: AI Governance Control Plane API
+  version: 0.10.0
+  description: |
+    Slice 10 contract: AI system registry, deterministic risk, hashed evidence,
+    fail-closed deployment gate, immutable snapshots, short-lived authorization,
+    workflow cases with SLA clocks, time-bounded exceptions, findings, incidents,
+    runtime revocation, agent action/resource authorization, desired versus
+    observed reconciliation, OIDC bearer identity, Alembic schema migrations,
+    a transactional audit outbox, an operator CLI, GitHub deployment checks,
+    and cloud-neutral execution-plane adapters (discover, collect, enforce)
+    for AWS, Azure, and GCP. Tenant, actor, and roles come from the validated
+    token, never from the request body.
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://localhost:8000
+    description: Local
+tags:
+  - name: Health
+  - name: AI Systems
+  - name: Risk
+  - name: Policy
+  - name: Audit
+  - name: Evidence
+  - name: Authorization
+  - name: Workflow
+  - name: Findings
+  - name: Agents
+  - name: Reconciliation
+  - name: Identity
+  - name: Outbox
+  - name: Integrations
+  - name: Adapters
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Liveness
+      operationId: getHealth
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /ready:
+    get:
+      tags: [Health]
+      security: []
+      summary: Readiness
+      operationId: getReady
+      responses:
+        "200":
+          description: Dependencies are reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Not ready
+  /v1/me:
+    get:
+      tags: [Identity]
+      summary: Return the authenticated principal bound to the bearer token
+      operationId: getMe
+      responses:
+        "200":
+          description: Current principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: OIDC issuer or JWKS is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /v1/ai-systems:
+    get:
+      tags: [AI Systems]
+      summary: List AI systems for the authenticated tenant
+      operationId: listAISystems
+      responses:
+        "200":
+          description: Inventory page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystemList"
+    post:
+      tags: [AI Systems]
+      summary: Register an AI system
+      operationId: registerAISystem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AISystemRegistration"
+      responses:
+        "201":
+          description: Registered in DRAFT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /v1/ai-systems/{systemId}:
+    get:
+      tags: [AI Systems]
+      summary: Get AI System 360 payload
+      operationId: getAISystem
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "200":
+          description: Canonical system view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/assessments:
+    post:
+      tags: [Risk]
+      summary: Compute a deterministic risk assessment
+      operationId: assessAISystem
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "201":
+          description: New assessment snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskAssessment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/approvals:
+    post:
+      tags: [Policy]
+      summary: Record a control-function approval
+      operationId: recordApproval
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalRequest"
+      responses:
+        "201":
+          description: Approval recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/oversight:
+    post:
+      tags: [Policy]
+      summary: Attach human-oversight controls
+      operationId: attachOversight
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OversightRequest"
+      responses:
+        "200":
+          description: Oversight updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/deployments/gate:
+    post:
+      tags: [Policy]
+      summary: Evaluate the production deployment gate
+      operationId: evaluateDeploymentGate
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeploymentGateRequest"
+      responses:
+        "200":
+          description: Gate decision (ALLOW, REVIEW, or BLOCK) plus fingerprint; authorizationId only on ALLOW
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDecision"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/audit-events:
+    get:
+      tags: [Audit]
+      summary: Append-only audit trail for an AI system
+      operationId: listAuditEvents
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "200":
+          description: Oldest-first hash-chained events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/evidence:
+    post:
+      tags: [Evidence]
+      summary: Attach hashed evidence bound to the current asset version
+      operationId: attachEvidence
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceAttachRequest"
+      responses:
+        "201":
+          description: Evidence stored and hashed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/evidence/{evidenceId}/verify:
+    post:
+      tags: [Evidence]
+      summary: Recompute the digest of stored bytes and compare to the record
+      operationId: verifyEvidence
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - name: evidenceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Verification status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/authorizations/{authorizationId}/verify:
+    post:
+      tags: [Authorization]
+      summary: Verify a short-lived deployment authorization
+      description: |
+        Returns HTTP 200 with outcome ALLOW or DENY. Expired, revoked, consumed,
+        version-mismatched, or tampered signatures are DENY — never a silent pass.
+      operationId: verifyDeploymentAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/authorizationId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizationVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationVerify"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/authorizations/{authorizationId}/revoke:
+    post:
+      tags: [Authorization]
+      summary: Revoke a deployment authorization immediately
+      operationId: revokeDeploymentAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/authorizationId"
+      responses:
+        "200":
+          description: Authorization is no longer valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentAuthorization"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions:
+    post:
+      tags: [Workflow]
+      summary: Request a time-bounded exception for a named gate violation
+      operationId: requestException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExceptionRequest"
+      responses:
+        "201":
+          description: Exception requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions/{exceptionId}/grant:
+    post:
+      tags: [Workflow]
+      summary: Grant a requested exception (reviewer, segregation of duties)
+      operationId: grantException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/exceptionId"
+      responses:
+        "200":
+          description: Exception granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions/{exceptionId}/deny:
+    post:
+      tags: [Workflow]
+      summary: Deny a requested exception
+      operationId: denyException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/exceptionId"
+      responses:
+        "200":
+          description: Exception denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/exceptions/{exceptionId}/revoke:
+    post:
+      tags: [Workflow]
+      summary: Revoke a granted exception and active deployment authorizations
+      operationId: revokeException
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/exceptionId"
+      responses:
+        "200":
+          description: Exception revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/findings:
+    post:
+      tags: [Findings]
+      summary: Record a version-bound finding; HIGH and CRITICAL auto-promote to an incident
+      operationId: recordFinding
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingRequest"
+      responses:
+        "201":
+          description: Finding recorded; HIGH/CRITICAL also open an incident and revoke authorization
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/findings/{findingId}/promote:
+    post:
+      tags: [Findings]
+      summary: Promote an open finding to an incident and revoke live authorization
+      operationId: promoteFinding
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/findingId"
+      responses:
+        "200":
+          description: Finding promoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/findings/{findingId}/dismiss:
+    post:
+      tags: [Findings]
+      summary: Dismiss an open finding without opening an incident
+      operationId: dismissFinding
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/findingId"
+      responses:
+        "200":
+          description: Finding dismissed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/incidents/{incidentId}/resolve:
+    post:
+      tags: [Findings]
+      summary: Resolve an open incident; does not mint a new authorization
+      operationId: resolveIncident
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/incidentId"
+      responses:
+        "200":
+          description: Incident resolved; re-evaluate the gate to authorize
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/capabilities:
+    post:
+      tags: [Agents]
+      summary: Declare a version-bound agent capability (action + resource pattern)
+      operationId: declareCapability
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CapabilityRequest"
+      responses:
+        "201":
+          description: Capability declared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/capabilities/{capabilityId}/approve:
+    post:
+      tags: [Agents]
+      summary: Approve a privileged capability (reviewer, segregation of duties)
+      operationId: approveCapability
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/capabilityId"
+      responses:
+        "200":
+          description: Capability approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "409":
+          description: Segregation of duties violation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/actions/authorize:
+    post:
+      tags: [Agents]
+      summary: Authorize an agent action against a resource (ALLOW or DENY)
+      operationId: authorizeAction
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionAuthorizeRequest"
+      responses:
+        "200":
+          description: Action decision; ALLOW mints a short-lived action token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionDecision"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/action-authorizations/{actionAuthorizationId}/verify:
+    post:
+      tags: [Agents]
+      summary: Verify an action authorization token
+      operationId: verifyActionAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/actionAuthorizationId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizationVerifyRequest"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAuthorizationVerify"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/action-authorizations/{actionAuthorizationId}/revoke:
+    post:
+      tags: [Agents]
+      summary: Revoke an action authorization immediately
+      operationId: revokeActionAuthorization
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+        - $ref: "#/components/parameters/actionAuthorizationId"
+      responses:
+        "200":
+          description: Action authorization is no longer valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAuthorization"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/observations:
+    post:
+      tags: [Reconciliation]
+      summary: Record an observed runtime state and reconcile it against the authorized desired state
+      operationId: recordObservation
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ObservationRequest"
+      responses:
+        "201":
+          description: Observation recorded; HIGH drift revokes authorization and blocks the system
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/outbox/publish:
+    post:
+      tags: [Outbox]
+      summary: Publish unpublished dual-written audit events to the configured sink
+      operationId: publishOutbox
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+      responses:
+        "200":
+          description: Number of events accepted by the sink
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxPublish"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/integrations/github/webhook:
+    post:
+      tags: [Integrations]
+      security: []
+      summary: HMAC-verified GitHub webhook that records the latest deployment-gate conclusion
+      operationId: githubWebhook
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Check recorded against the latest gate outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubCheck"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Webhook secret is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /v1/ai-systems/{systemId}/github-checks:
+    post:
+      tags: [Integrations]
+      summary: Record the latest deployment-gate outcome as a GitHub check for a commit SHA
+      operationId: recordGithubCheck
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitHubCheckRequest"
+      responses:
+        "201":
+          description: Check persisted locally; posted to GitHub when a token and repo are configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubCheck"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/adapters:
+    get:
+      tags: [Adapters]
+      summary: Report execution-plane adapter mode and registered providers
+      operationId: getAdapters
+      responses:
+        "200":
+          description: Adapter plane status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterStatus"
+  /v1/ai-systems/{systemId}/runtime-bindings:
+    post:
+      tags: [Adapters]
+      summary: Bind the AI system to an AWS, Azure, GCP, or local runtime
+      operationId: bindRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeBindingRequest"
+      responses:
+        "201":
+          description: Binding is active; prior binding is superseded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/runtime/discover:
+    post:
+      tags: [Adapters]
+      summary: Discover the bound cloud runtime through the execution-plane adapter
+      operationId: discoverRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "201":
+          description: Discovery result recorded as an adapter run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Live adapter unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/runtime/collect:
+    post:
+      tags: [Adapters]
+      summary: Collect observed runtime state and reconcile it against the authorized desired state
+      operationId: collectRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeCollectRequest"
+      responses:
+        "201":
+          description: Observation recorded; HIGH drift contains the runtime when a binding exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Live adapter unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/runtime/enforce:
+    post:
+      tags: [Adapters]
+      summary: Apply CONTAIN or PERMIT at the bound execution-plane runtime
+      operationId: enforceRuntime
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeEnforceRequest"
+      responses:
+        "201":
+          description: Enforcement result recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: Live adapter unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/ai-systems/{systemId}/versions:
+    post:
+      tags: [AI Systems]
+      summary: Cut a new asset version so prior evidence no longer satisfies controls
+      operationId: cutAssetVersion
+      parameters:
+        - $ref: "#/components/parameters/systemId"
+      responses:
+        "201":
+          description: New current version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AISystem360"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Slice 10 bearer JWT from the configured OIDC issuer, or local demo tokens `demo` / `demo-reviewer` when demo auth is enabled.
+  parameters:
+    systemId:
+      name: systemId
+      in: path
+      required: true
+      schema:
+        type: string
+    authorizationId:
+      name: authorizationId
+      in: path
+      required: true
+      schema:
+        type: string
+    exceptionId:
+      name: exceptionId
+      in: path
+      required: true
+      schema:
+        type: string
+    findingId:
+      name: findingId
+      in: path
+      required: true
+      schema:
+        type: string
+    incidentId:
+      name: incidentId
+      in: path
+      required: true
+      schema:
+        type: string
+    capabilityId:
+      name: capabilityId
+      in: path
+      required: true
+      schema:
+        type: string
+    actionAuthorizationId:
+      name: actionAuthorizationId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Resource not found in this tenant
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationError:
+      description: Request failed schema validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        details:
+          type: object
+          additionalProperties: true
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+    Principal:
+      type: object
+      required: [tenantId, actorId, actorType, roles, displayName, authMethod]
+      properties:
+        tenantId:
+          type: string
+        actorId:
+          type: string
+        actorType:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        displayName:
+          type: string
+        authMethod:
+          type: string
+          enum: [demo, oidc]
+    AISystemRegistration:
+      type: object
+      required:
+        - name
+        - systemType
+        - businessPurpose
+        - owner
+        - environment
+        - dataClassification
+        - geography
+        - autonomyLevel
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        systemType:
+          $ref: "#/components/schemas/SystemType"
+        businessPurpose:
+          type: string
+        owner:
+          type: string
+        environment:
+          $ref: "#/components/schemas/Environment"
+        dataClassification:
+          $ref: "#/components/schemas/DataClassification"
+        geography:
+          type: string
+        autonomyLevel:
+          $ref: "#/components/schemas/AutonomyLevel"
+        modelRefs:
+          type: array
+          items:
+            type: string
+        vendorRefs:
+          type: array
+          items:
+            type: string
+        intendedUsers:
+          type: string
+        customerImpact:
+          $ref: "#/components/schemas/ImpactLevel"
+        financialImpact:
+          $ref: "#/components/schemas/ImpactLevel"
+        humanOversight:
+          type: array
+          items:
+            type: string
+        knownLimitations:
+          type: string
+        usesCustomerDecision:
+          type: boolean
+          default: false
+        publicEndpoint:
+          type: boolean
+          default: false
+        evaluationRefs:
+          type: array
+          items:
+            type: string
+        monitoringEnabled:
+          type: boolean
+          default: false
+    SystemType:
+      type: string
+      enum: [PREDICTIVE_MODEL, GENAI_APP, AGENT, THIRD_PARTY_LLM, DATASET]
+    Environment:
+      type: string
+      enum: [dev, test, staging, production]
+    DataClassification:
+      type: string
+      enum: [PUBLIC, INTERNAL, CONFIDENTIAL, PII, PCI, RESTRICTED]
+    AutonomyLevel:
+      type: string
+      enum: [HUMAN_IN_LOOP, ASSISTIVE, SEMI_AUTONOMOUS, AUTONOMOUS]
+    ImpactLevel:
+      type: string
+      enum: [NONE, LOW, MEDIUM, HIGH, CRITICAL]
+    LifecycleStatus:
+      type: string
+      enum:
+        - DRAFT
+        - ASSESSMENT_PENDING
+        - REVIEW_REQUIRED
+        - APPROVED
+        - BLOCKED
+        - DEPLOYMENT_PENDING
+    RiskBand:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    GateOutcome:
+      type: string
+      enum: [ALLOW, REVIEW, BLOCK]
+    AISystem:
+      type: object
+      required:
+        - id
+        - urn
+        - tenantId
+        - name
+        - systemType
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+        urn:
+          type: string
+        tenantId:
+          type: string
+        name:
+          type: string
+        systemType:
+          $ref: "#/components/schemas/SystemType"
+        businessPurpose:
+          type: string
+        owner:
+          type: string
+        environment:
+          $ref: "#/components/schemas/Environment"
+        dataClassification:
+          $ref: "#/components/schemas/DataClassification"
+        geography:
+          type: string
+        autonomyLevel:
+          $ref: "#/components/schemas/AutonomyLevel"
+        status:
+          $ref: "#/components/schemas/LifecycleStatus"
+        riskBand:
+          $ref: "#/components/schemas/RiskBand"
+        currentVersionId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AISystemList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AISystem"
+    ApprovalRecord:
+      type: object
+      required: [function, approved, actorId, recordedAt]
+      properties:
+        function:
+          type: string
+          enum: [privacy, security, risk, owner]
+        approved:
+          type: boolean
+        actorId:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    RiskDriver:
+      type: object
+      required: [code, contribution]
+      properties:
+        code:
+          type: string
+        contribution:
+          type: number
+        detail:
+          type: string
+    RiskAssessment:
+      type: object
+      required:
+        - id
+        - systemId
+        - score
+        - riskBand
+        - confidence
+        - drivers
+        - engineVersion
+        - assessedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        score:
+          type: number
+        riskBand:
+          $ref: "#/components/schemas/RiskBand"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        drivers:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskDriver"
+        hardConstraints:
+          type: array
+          items:
+            type: string
+        missingInputs:
+          type: array
+          items:
+            type: string
+        engineVersion:
+          type: string
+        assessedAt:
+          type: string
+          format: date-time
+    PolicyReason:
+      type: object
+      required: [code, severity]
+      properties:
+        code:
+          type: string
+        severity:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        message:
+          type: string
+    PolicyDecision:
+      type: object
+      required:
+        - id
+        - systemId
+        - outcome
+        - policyBundle
+        - reasons
+        - decidedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/GateOutcome"
+        policyBundle:
+          type: string
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyReason"
+        requiredActions:
+          type: array
+          items:
+            type: string
+        policyDigest:
+          type: string
+        inputDigest:
+          type: string
+        fingerprint:
+          type: string
+        snapshotId:
+          type: string
+        authorizationId:
+          type: string
+        decidedAt:
+          type: string
+          format: date-time
+    AISystem360:
+      type: object
+      required: [system]
+      properties:
+        system:
+          $ref: "#/components/schemas/AISystem"
+        registration:
+          $ref: "#/components/schemas/AISystemRegistration"
+        latestAssessment:
+          $ref: "#/components/schemas/RiskAssessment"
+        latestDecision:
+          $ref: "#/components/schemas/PolicyDecision"
+        approvals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalRecord"
+        humanOversight:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceArtifact"
+        controls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ControlAssessment"
+        latestSnapshot:
+          $ref: "#/components/schemas/GovernanceSnapshot"
+        latestAuthorization:
+          $ref: "#/components/schemas/DeploymentAuthorization"
+        latestCase:
+          $ref: "#/components/schemas/WorkflowCase"
+        cases:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowCase"
+        exceptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExceptionRecord"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FindingRecord"
+        incidents:
+          type: array
+          items:
+            $ref: "#/components/schemas/IncidentRecord"
+        latestIncident:
+          $ref: "#/components/schemas/IncidentRecord"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityRecord"
+        latestActionDecision:
+          $ref: "#/components/schemas/ActionDecision"
+        latestActionAuthorization:
+          $ref: "#/components/schemas/ActionAuthorization"
+        latestObservation:
+          $ref: "#/components/schemas/RuntimeObservation"
+        latestReconciliation:
+          $ref: "#/components/schemas/ReconciliationResult"
+        latestOutboxEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxEvent"
+        githubChecks:
+          type: array
+          items:
+            $ref: "#/components/schemas/GitHubCheck"
+        latestGithubCheck:
+          $ref: "#/components/schemas/GitHubCheck"
+        runtimeBinding:
+          $ref: "#/components/schemas/RuntimeBinding"
+        adapterRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdapterRun"
+        latestAdapterRun:
+          $ref: "#/components/schemas/AdapterRun"
+    ApprovalRequest:
+      type: object
+      required: [function, approved]
+      properties:
+        function:
+          type: string
+          enum: [privacy, security, risk, owner]
+        approved:
+          type: boolean
+    OversightRequest:
+      type: object
+      required: [controls]
+      properties:
+        controls:
+          type: array
+          items:
+            type: string
+          minItems: 1
+    DeploymentGateRequest:
+      type: object
+      properties:
+        environment:
+          $ref: "#/components/schemas/Environment"
+        evidenceStale:
+          type: boolean
+          default: false
+        cloud:
+          type: string
+          default: local
+        region:
+          type: string
+        audience:
+          type: string
+          default: cicd
+    EvidenceAttachRequest:
+      type: object
+      required: [type, filename, content]
+      properties:
+        type:
+          type: string
+          enum: [MODEL_CARD, EVALUATION_RUN, FAIRNESS_EVALUATION, SECURITY_SCAN, SBOM]
+        filename:
+          type: string
+        content:
+          type: string
+        collectedAt:
+          type: string
+          format: date-time
+        boundVersionId:
+          type: string
+        mediaType:
+          type: string
+    EvidenceArtifact:
+      type: object
+      required: [id, systemId, boundVersionId, type, sha256, verificationStatus, collectedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        boundVersionId:
+          type: string
+        type:
+          type: string
+        filename:
+          type: string
+        uri:
+          type: string
+        sha256:
+          type: string
+        bytesSize:
+          type: integer
+        collectorVersion:
+          type: string
+        verificationStatus:
+          type: string
+          enum: [VERIFIED, FAIL]
+        collectedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ControlAssessment:
+      type: object
+      required: [controlId, evidenceType, required, status, reason]
+      properties:
+        controlId:
+          type: string
+        evidenceType:
+          type: string
+        required:
+          type: boolean
+        status:
+          type: string
+          enum: [PASS, FAIL, STALE, UNKNOWN, NOT_APPLICABLE]
+        evidenceId:
+          type: string
+        reason:
+          type: string
+        maxAgeDays:
+          type: integer
+        sha256:
+          type: string
+    GovernanceSnapshot:
+      type: object
+      required:
+        - id
+        - systemId
+        - policyDecisionId
+        - outcome
+        - assetVersionId
+        - fingerprint
+        - snapshot
+        - createdAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        policyDecisionId:
+          type: string
+        outcome:
+          $ref: "#/components/schemas/GateOutcome"
+        assetVersionId:
+          type: string
+        fingerprint:
+          type: string
+        snapshot:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    DeploymentAuthorization:
+      type: object
+      required:
+        - id
+        - systemId
+        - decisionId
+        - assetVersionId
+        - environment
+        - fingerprint
+        - signature
+        - issuedAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        decisionId:
+          type: string
+        assetVersionId:
+          type: string
+        environment:
+          $ref: "#/components/schemas/Environment"
+        cloud:
+          type: string
+        region:
+          type: string
+        audience:
+          type: string
+        nonce:
+          type: string
+        fingerprint:
+          type: string
+        signature:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        consumedAt:
+          type: string
+          format: date-time
+    AuthorizationVerifyRequest:
+      type: object
+      properties:
+        signature:
+          type: string
+        consume:
+          type: boolean
+          default: false
+    AuthorizationVerify:
+      type: object
+      required: [outcome, authorization]
+      properties:
+        outcome:
+          $ref: "#/components/schemas/GateOutcome"
+        reasons:
+          type: array
+          items:
+            type: string
+        authorization:
+          $ref: "#/components/schemas/DeploymentAuthorization"
+    ExceptionRequest:
+      type: object
+      required: [violationCode, justification]
+      properties:
+        violationCode:
+          type: string
+        justification:
+          type: string
+          minLength: 8
+        expiresAt:
+          type: string
+          format: date-time
+        controlId:
+          type: string
+    WorkflowCase:
+      type: object
+      required: [id, systemId, caseType, status, slaStatus, openedAt, dueAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        decisionId:
+          type: string
+        snapshotId:
+          type: string
+        caseType:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, CLOSED]
+        riskBand:
+          $ref: "#/components/schemas/RiskBand"
+        reasonCodes:
+          type: array
+          items:
+            type: string
+        slaStatus:
+          type: string
+          enum: [ON_TRACK, DUE_SOON, OVERDUE]
+        openedAt:
+          type: string
+          format: date-time
+        dueAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+    ExceptionRecord:
+      type: object
+      required: [id, systemId, violationCode, status, requestedBy, requestedAt, expiresAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        caseId:
+          type: string
+        violationCode:
+          type: string
+        controlId:
+          type: string
+        boundVersionId:
+          type: string
+        justification:
+          type: string
+        status:
+          type: string
+          enum: [REQUESTED, GRANTED, DENIED, EXPIRED, REVOKED]
+        requestedBy:
+          type: string
+        grantedBy:
+          type: string
+        requestedAt:
+          type: string
+          format: date-time
+        grantedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+    FindingRequest:
+      type: object
+      required: [findingType, severity, summary]
+      properties:
+        findingType:
+          type: string
+          enum:
+            - EVAL_REGRESSION
+            - FAIRNESS_DRIFT
+            - SECURITY_SIGNAL
+            - DATA_DRIFT
+            - POLICY_VIOLATION
+            - HUMAN_REPORT
+        severity:
+          $ref: "#/components/schemas/RiskBand"
+        summary:
+          type: string
+          minLength: 8
+        detector:
+          type: string
+          default: HUMAN
+    FindingRecord:
+      type: object
+      required:
+        - id
+        - systemId
+        - boundVersionId
+        - findingType
+        - severity
+        - summary
+        - detector
+        - status
+        - recordedBy
+        - recordedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        incidentId:
+          type: string
+        boundVersionId:
+          type: string
+        findingType:
+          type: string
+        severity:
+          $ref: "#/components/schemas/RiskBand"
+        summary:
+          type: string
+        detector:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, PROMOTED, RESOLVED, DISMISSED]
+        recordedBy:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        dismissedAt:
+          type: string
+          format: date-time
+    IncidentRecord:
+      type: object
+      required: [id, systemId, severity, status, title, summary, openedBy, openedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        severity:
+          $ref: "#/components/schemas/RiskBand"
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+        title:
+          type: string
+        summary:
+          type: string
+        openedBy:
+          type: string
+        resolvedBy:
+          type: string
+        openedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+    CapabilityRequest:
+      type: object
+      required: [action, resourcePattern]
+      properties:
+        action:
+          type: string
+        resourcePattern:
+          type: string
+        maxAmount:
+          type: number
+        requiresApproval:
+          type: boolean
+          default: false
+    CapabilityRecord:
+      type: object
+      required: [id, systemId, boundVersionId, action, resourcePattern, requiresApproval, approved, declaredBy, declaredAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        boundVersionId:
+          type: string
+        action:
+          type: string
+        resourcePattern:
+          type: string
+        maxAmount:
+          type: number
+        requiresApproval:
+          type: boolean
+        approved:
+          type: boolean
+        declaredBy:
+          type: string
+        approvedBy:
+          type: string
+        declaredAt:
+          type: string
+          format: date-time
+        approvedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+    ActionAuthorizeRequest:
+      type: object
+      required: [action, resource]
+      properties:
+        action:
+          type: string
+        resource:
+          type: string
+        amount:
+          type: number
+    ActionDecision:
+      type: object
+      required: [id, systemId, outcome, action, resource, fingerprint, decidedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        outcome:
+          type: string
+          enum: [ALLOW, DENY]
+        action:
+          type: string
+        resource:
+          type: string
+        amount:
+          type: number
+        capabilityId:
+          type: string
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyReason"
+        requiredActions:
+          type: array
+          items:
+            type: string
+        policyBundle:
+          type: string
+        policyDigest:
+          type: string
+        inputDigest:
+          type: string
+        fingerprint:
+          type: string
+        authorizationId:
+          type: string
+        decidedAt:
+          type: string
+          format: date-time
+    ActionAuthorization:
+      type: object
+      required: [id, systemId, decisionId, assetVersionId, action, resource, fingerprint, signature, issuedAt, expiresAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        decisionId:
+          type: string
+        assetVersionId:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        nonce:
+          type: string
+        fingerprint:
+          type: string
+        signature:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        consumedAt:
+          type: string
+          format: date-time
+    ActionAuthorizationVerify:
+      type: object
+      required: [outcome, authorization]
+      properties:
+        outcome:
+          type: string
+          enum: [ALLOW, DENY]
+        reasons:
+          type: array
+          items:
+            type: string
+        authorization:
+          $ref: "#/components/schemas/ActionAuthorization"
+    ObservationRequest:
+      type: object
+      properties:
+        running:
+          type: boolean
+          default: true
+        assetVersionId:
+          type: string
+        environment:
+          type: string
+        cloud:
+          type: string
+          default: local
+        region:
+          type: string
+        fingerprint:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+    RuntimeObservation:
+      type: object
+      required:
+        - id
+        - systemId
+        - boundVersionId
+        - environment
+        - cloud
+        - running
+        - observedAt
+        - recordedBy
+        - recordedAt
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        boundVersionId:
+          type: string
+        environment:
+          type: string
+        cloud:
+          type: string
+        region:
+          type: string
+        fingerprint:
+          type: string
+        running:
+          type: boolean
+        observedAt:
+          type: string
+          format: date-time
+        recordedBy:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    ReconciliationResult:
+      type: object
+      required: [id, systemId, status, reconciledAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        observationId:
+          type: string
+        status:
+          type: string
+          enum: [IN_SYNC, DRIFT, UNKNOWN]
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyReason"
+        desired:
+          type: object
+          additionalProperties: true
+        observed:
+          type: object
+          additionalProperties: true
+        reconciledAt:
+          type: string
+          format: date-time
+    OutboxEvent:
+      type: object
+      required: [id, eventId, eventType, aggregateId, occurredAt, publishAttempts]
+      properties:
+        id:
+          type: string
+        eventId:
+          type: string
+        eventType:
+          type: string
+        aggregateId:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+        publishAttempts:
+          type: integer
+        lastError:
+          type: string
+    OutboxPublish:
+      type: object
+      required: [published]
+      properties:
+        published:
+          type: integer
+    GitHubCheckRequest:
+      type: object
+      required: [sha]
+      properties:
+        sha:
+          type: string
+        repo:
+          type: string
+    GitHubCheck:
+      type: object
+      required: [id, systemId, sha, name, status, conclusion, recordedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        sha:
+          type: string
+        repo:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        conclusion:
+          type: string
+          enum: [success, neutral, failure]
+        htmlUrl:
+          type: string
+        decisionId:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    RuntimeBindingRequest:
+      type: object
+      required: [provider, resourceRef]
+      properties:
+        provider:
+          type: string
+          enum: [aws, azure, gcp, local]
+        resourceRef:
+          type: string
+        service:
+          type: string
+        region:
+          type: string
+        accountRef:
+          type: string
+    RuntimeBinding:
+      type: object
+      required: [id, systemId, provider, service, resourceRef, status, createdAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        provider:
+          type: string
+        service:
+          type: string
+        resourceRef:
+          type: string
+        region:
+          type: string
+        accountRef:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        supersededAt:
+          type: string
+          format: date-time
+    RuntimeCollectRequest:
+      type: object
+      properties:
+        scenario:
+          type: string
+          enum: [in_sync, drift, stopped]
+          default: in_sync
+    RuntimeEnforceRequest:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [CONTAIN, PERMIT]
+          default: CONTAIN
+    AdapterRun:
+      type: object
+      required: [id, systemId, bindingId, kind, provider, status, recordedAt]
+      properties:
+        id:
+          type: string
+        systemId:
+          type: string
+        bindingId:
+          type: string
+        kind:
+          type: string
+          enum: [discover, collect, enforce]
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [SUCCEEDED, FAILED]
+        action:
+          type: string
+        result:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+    AdapterStatus:
+      type: object
+      required: [mode, providers, objectStore]
+      properties:
+        mode:
+          type: string
+        providers:
+          type: array
+          items:
+            type: string
+        objectStore:
+          type: string
+    AuditEvent:
+      type: object
+      required:
+        - eventId
+        - eventType
+        - aggregateId
+        - occurredAt
+        - hash
+      properties:
+        eventId:
+          type: string
+        eventType:
+          type: string
+        aggregateId:
+          type: string
+        actor:
+          type: object
+          additionalProperties: true
+        occurredAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+        hash:
+          type: string
+        previousEventHash:
+          type: string
+    AuditEventList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
