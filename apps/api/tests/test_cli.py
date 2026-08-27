@@ -50,9 +50,19 @@ def test_cli_gate_review_exit_two(monkeypatch) -> None:
     assert main(["gate", "sys_demo"]) == 2
 
 
-def test_parser_exposes_operator_commands() -> None:
+def test_parser_exposes_runtime_commands() -> None:
     parser = build_parser()
-    args = parser.parse_args(["github", "check", "sys_x", "--sha", "abc", "--repo", "acme/fraud"])
-    assert args.command == "github"
-    assert args.github_command == "check"
-    assert args.sha == "abc"
+    args = parser.parse_args(
+        [
+            "bind",
+            "sys_x",
+            "--provider",
+            "aws",
+            "--resource",
+            "fraud-endpoint",
+            "--region",
+            "us-east-1",
+        ]
+    )
+    assert args.command == "bind"
+    assert args.provider == "aws"
