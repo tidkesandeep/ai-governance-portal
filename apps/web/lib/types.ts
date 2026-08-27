@@ -148,6 +148,62 @@ export type Incident = {
   resolvedAt?: string | null;
 };
 
+export type Capability = {
+  id: string;
+  systemId: string;
+  boundVersionId: string;
+  action: string;
+  resourcePattern: string;
+  maxAmount?: number | null;
+  requiresApproval: boolean;
+  approved: boolean;
+  declaredBy: string;
+  approvedBy?: string | null;
+  declaredAt: string;
+  approvedAt?: string | null;
+  revokedAt?: string | null;
+};
+
+export type ActionDecision = {
+  id: string;
+  systemId: string;
+  outcome: "ALLOW" | "DENY";
+  action: string;
+  resource: string;
+  amount?: number | null;
+  capabilityId?: string | null;
+  reasons: PolicyReason[];
+  requiredActions: string[];
+  policyBundle: string;
+  policyDigest?: string | null;
+  inputDigest?: string | null;
+  fingerprint: string;
+  authorizationId?: string | null;
+  decidedAt: string;
+};
+
+export type ActionAuthorization = {
+  id: string;
+  systemId: string;
+  decisionId: string;
+  assetVersionId: string;
+  action: string;
+  resource: string;
+  nonce: string;
+  fingerprint: string;
+  signature: string;
+  issuedAt: string;
+  expiresAt: string;
+  revokedAt?: string | null;
+  consumedAt?: string | null;
+};
+
+export type ActionAuthorizationVerify = {
+  outcome: "ALLOW" | "DENY";
+  reasons: string[];
+  authorization: ActionAuthorization;
+};
+
 export type Approval = {
   function: string;
   approved: boolean;
@@ -209,6 +265,9 @@ export type AISystem360 = {
   findings: Finding[];
   incidents: Incident[];
   latestIncident?: Incident | null;
+  capabilities: Capability[];
+  latestActionDecision?: ActionDecision | null;
+  latestActionAuthorization?: ActionAuthorization | null;
 };
 
 export type Registration = {
