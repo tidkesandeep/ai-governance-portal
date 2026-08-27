@@ -1,3 +1,12 @@
+export type Principal = {
+  tenantId: string;
+  actorId: string;
+  actorType: string;
+  roles: string[];
+  displayName: string;
+  authMethod: "demo" | "oidc" | string;
+};
+
 export type RiskBand = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type GateOutcome = "ALLOW" | "REVIEW" | "BLOCK";
 
