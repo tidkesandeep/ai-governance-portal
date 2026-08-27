@@ -26,6 +26,7 @@ export function outcomeClass(outcome?: string | null) {
     case "REVIEW":
       return "border-brass bg-brass text-white";
     case "BLOCK":
+    case "DENY":
       return "border-carmine bg-carmine text-white";
     default:
       return "border-rule bg-panel text-ink";
