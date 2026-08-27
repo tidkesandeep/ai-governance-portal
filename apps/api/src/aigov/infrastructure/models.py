@@ -302,3 +302,34 @@ class ReconciliationResultModel(Base):
     desired: Mapped[dict] = mapped_column(JSON)
     observed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reconciled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EventOutboxModel(Base):
+    __tablename__ = "event_outbox"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    aggregate_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_type: Mapped[str] = mapped_column(String(128))
+    payload: Mapped[dict] = mapped_column(JSON)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    publish_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class GitHubCheckModel(Base):
+    __tablename__ = "github_checks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    system_id: Mapped[str] = mapped_column(String(64), index=True)
+    sha: Mapped[str] = mapped_column(String(64))
+    repo: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    name: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32))
+    conclusion: Mapped[str] = mapped_column(String(32))
+    html_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    decision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
